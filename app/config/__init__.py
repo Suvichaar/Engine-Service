@@ -55,12 +55,52 @@ class AWSSettings(BaseModel):
     default_error_image: str
 
 
+class AIImageSettings(BaseModel):
+    endpoint: str
+    api_key: str
+
+
+class PexelsSettings(BaseModel):
+    api_key: str
+
+
+class ImageProcessingSettings(BaseModel):
+    resize_variants: str = "sm:300x200,md:768x432,lg:1280x720"
+
+
+class ElevenLabsSettings(BaseModel):
+    api_key: str
+    voice_id: str
+
+
+class AzureVoiceSettings(BaseModel):
+    speech_key: str
+    region: str
+    voice: str
+
+
+class VoiceStorageSettings(BaseModel):
+    bucket: str
+    prefix: str
+
+
+class DatabaseSettings(BaseModel):
+    url: str = "sqlite:///./stories.db"
+
+
 class AppSettings(BaseModel):
     azure_api: AzureAPISettings
     dalle: DalleSettings
     azure_speech: AzureSpeechSettings
     azure_di: AzureDocumentIntelligenceSettings
     aws: AWSSettings
+    ai_image: AIImageSettings | None = None
+    pexels: PexelsSettings | None = None
+    image_processing: ImageProcessingSettings = ImageProcessingSettings()
+    elevenlabs: ElevenLabsSettings | None = None
+    azure_voice: AzureVoiceSettings | None = None
+    voice_storage: VoiceStorageSettings | None = None
+    database: DatabaseSettings = DatabaseSettings()
 
 
 def _load_toml(path: Path) -> Dict[str, Any]:
@@ -102,6 +142,28 @@ def _env_override() -> Dict[str, Any]:
             "cdn_html_base": os.getenv("CDN_HTML_BASE"),
             "cdn_base": os.getenv("CDN_BASE"),
             "default_error_image": os.getenv("DEFAULT_ERROR_IMAGE"),
+        },
+        "ai_image": {
+            "endpoint": os.getenv("AI_IMAGE_ENDPOINT"),
+            "api_key": os.getenv("AI_IMAGE_API_KEY"),
+        },
+        "pexels": {"api_key": os.getenv("PEXELS_API_KEY")},
+        "image_processing": {"resize_variants": os.getenv("RESIZE_VARIANTS")},
+        "elevenlabs": {
+            "api_key": os.getenv("ELEVENLABS_API_KEY"),
+            "voice_id": os.getenv("ELEVENLABS_VOICE_ID"),
+        },
+        "azure_voice": {
+            "speech_key": os.getenv("AZURE_SPEECH_KEY"),
+            "region": os.getenv("AZURE_SPEECH_REGION"),
+            "voice": os.getenv("AZURE_SPEECH_VOICE"),
+        },
+        "voice_storage": {
+            "bucket": os.getenv("VOICE_BUCKET"),
+            "prefix": os.getenv("VOICE_PREFIX"),
+        },
+        "database": {
+            "url": os.getenv("DATABASE_URL"),
         },
     }
     return {
@@ -156,6 +218,32 @@ SECTION_MAPPING: Dict[str, Dict[str, str]] = {
         "CDN_BASE": "cdn_base",
         "DEFAULT_ERROR_IMAGE": "default_error_image",
     },
+    "ai_image": {
+        "AI_IMAGE_ENDPOINT": "endpoint",
+        "AI_IMAGE_API_KEY": "api_key",
+    },
+    "pexels": {
+        "PEXELS_API_KEY": "api_key",
+    },
+    "image_processing": {
+        "RESIZE_VARIANTS": "resize_variants",
+    },
+    "elevenlabs": {
+        "ELEVENLABS_API_KEY": "api_key",
+        "ELEVENLABS_VOICE_ID": "voice_id",
+    },
+    "azure_voice": {
+        "AZURE_SPEECH_KEY": "speech_key",
+        "AZURE_SPEECH_REGION": "region",
+        "AZURE_SPEECH_VOICE": "voice",
+    },
+    "voice_storage": {
+        "VOICE_BUCKET": "bucket",
+        "VOICE_PREFIX": "prefix",
+    },
+    "database": {
+        "DATABASE_URL": "url",
+    },
 }
 
 
@@ -196,6 +284,13 @@ __all__ = [
     "AzureSpeechSettings",
     "AWSSettings",
     "DalleSettings",
+    "AIImageSettings",
+    "PexelsSettings",
+    "ImageProcessingSettings",
+    "ElevenLabsSettings",
+    "AzureVoiceSettings",
+    "VoiceStorageSettings",
+    "DatabaseSettings",
     "get_settings",
     "load_settings",
 ]

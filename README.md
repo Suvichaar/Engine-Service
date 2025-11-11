@@ -48,6 +48,14 @@ tests/                     # Pytest suites covering each service
    ```
    Current suite: 27 passing tests covering all services.
 
+4. **Start the API (development)**
+   ```bash
+   uvicorn app.main:app --reload
+   ```
+   - `POST /stories` — create a story (uses orchestrator pipeline)
+   - `GET /stories/{id}` — fetch a stored story
+   - `GET /templates` — list available prompt modes
+
 ## Next Steps (Roadmap)
 
 - Build orchestration service connecting all existing components.

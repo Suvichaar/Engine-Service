@@ -9,5 +9,8 @@ __all__ = [
     "prompt_templates",
     "model_router",
     "model_clients",
+    "image_pipeline",
+    "voice_synthesis",
+    "orchestrator",
 ]
 

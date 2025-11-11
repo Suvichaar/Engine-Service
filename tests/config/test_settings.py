@@ -47,6 +47,12 @@ CDN_PREFIX_MEDIA = "media"
 CDN_HTML_BASE = "html-base"
 CDN_BASE = "base"
 DEFAULT_ERROR_IMAGE = "error-image"
+
+[image_processing]
+RESIZE_VARIANTS = "sm:100x100,md:200x200"
+
+[database]
+DATABASE_URL = "sqlite:///tmp.db"
 """,
     )
 
@@ -91,14 +97,19 @@ CDN_PREFIX_MEDIA = "config-media"
 CDN_HTML_BASE = "config-html-base"
 CDN_BASE = "config-base"
 DEFAULT_ERROR_IMAGE = "config-error"
+
+[database]
+DATABASE_URL = "sqlite:///tmp.db"
 """,
     )
 
     monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://from-env")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///env.db")
     monkeypatch.setenv("AWS_BUCKET", "env-bucket")
 
     settings = load_settings(config_path=config_path)
 
     assert settings.azure_api.endpoint == "https://from-env"
     assert settings.aws.bucket == "env-bucket"
+    assert settings.database.url == "sqlite:///env.db"
 
