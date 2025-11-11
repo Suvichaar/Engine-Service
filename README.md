@@ -1,4 +1,4 @@
-# Newslab Service v2
+# Storytelling Newslab Service
 
 Modular FastAPI backend (in progress) for generating narrative slide decks from mixed multimedia inputs. The current codebase delivers fully-tested domain types and service layers that will power Curious (explainable storytelling) and News (factual briefing) experiences.
 
