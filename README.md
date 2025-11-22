@@ -318,9 +318,6 @@ pytest --cov=app --cov-report=html
 1. Implement voice synthesis interface in `app/services/voice_synthesis.py`
 2. Register in `app/main.py`
 
-## 📄 License
-
-[Add your license here]
 
 ## 🤝 Contributing
 
@@ -330,10 +327,7 @@ pytest --cov=app --cov-report=html
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📞 Support
+## 📞Support
 
 For issues, questions, or contributions, please open an issue on GitHub.
 
----
-
-**Built with ❤️ using FastAPI, Azure OpenAI, and AWS**
