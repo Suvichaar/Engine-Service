@@ -1,65 +1,65 @@
 # Azure OpenAI (Text Generation)
 [azure_api]
 AZURE_OPENAI_ENDPOINT = "https://your-endpoint.cognitiveservices.azure.com"
-AZURE_OPENAI_API_KEY = "replace-with-api-key"
+AZURE_OPENAI_API_KEY = "YOUR_API_KEY_HERE"
 AZURE_OPENAI_DEPLOYMENT = "gpt-5-chat"
 AZURE_OPENAI_API_VERSION = "2025-01-01-preview"
 
 # Azure DALL·E (Image Generation)
 [dalle]
-DALL_E_ENDPOINT = "https://your-dalle-endpoint"
-DALL_E_KEY = "replace-with-dalle-key"
+DALL_E_ENDPOINT = "https://your-endpoint.cognitiveservices.azure.com/openai/deployments/dall-e-3/images/generations?api-version=2024-02-01"
+DALL_E_KEY = "YOUR_DALLE_KEY_HERE"
 
 # Azure Speech Services (Text-to-Speech)
 [azure_speech]
-AZURE_SPEECH_KEY = "replace-with-speech-key"
+AZURE_SPEECH_KEY = "YOUR_SPEECH_KEY_HERE"
 AZURE_SPEECH_REGION = "eastus"
 VOICE_NAME = "hi-IN-AaravNeural"
 
 # Azure Document Intelligence (OCR)
 [azure_di]
-AZURE_DI_ENDPOINT = "https://your-document-intelligence-endpoint"
-AZURE_DI_KEY = "replace-with-di-key"
+AZURE_DI_ENDPOINT = "https://your-endpoint.cognitiveservices.azure.com"
+AZURE_DI_KEY = "YOUR_DI_KEY_HERE"
 
 # AWS S3 (Media Storage)
 [aws]
-AWS_ACCESS_KEY = "replace-with-aws-access-key"
-AWS_SECRET_KEY = "replace-with-aws-secret-key"
+AWS_ACCESS_KEY = "YOUR_AWS_ACCESS_KEY"
+AWS_SECRET_KEY = "YOUR_AWS_SECRET_KEY"
 AWS_REGION = "ap-south-1"
-AWS_BUCKET = "suvichaarapp"
+AWS_BUCKET = "your-bucket-name"
 S3_PREFIX = "media"
 HTML_S3_PREFIX = ""
-CDN_PREFIX_MEDIA = "https://media.suvichaar.org/"
-CDN_HTML_BASE = "https://stories.suvichaar.org/"
-CDN_BASE = "https://cdn.suvichaar.org/"
-DEFAULT_ERROR_IMAGE = "https://media.suvichaar.org/default-error.jpg"
+CDN_PREFIX_MEDIA = "https://media.yourdomain.org/"
+CDN_HTML_BASE = "https://stories.yourdomain.org/"
+CDN_BASE = "https://cdn.yourdomain.org/"
+DEFAULT_ERROR_IMAGE = "https://media.yourdomain.org/default-error.jpg"
 
 # Image Providers
 [ai_image]
-AI_IMAGE_ENDPOINT = "https://your-ai-image-endpoint"
-AI_IMAGE_API_KEY = "replace-with-ai-image-key"
+AI_IMAGE_ENDPOINT = "https://your-endpoint.cognitiveservices.azure.com/openai/deployments/dall-e-3/images/generations?api-version=2024-02-01"
+AI_IMAGE_API_KEY = "YOUR_AI_IMAGE_KEY_HERE"
 
 [pexels]
-PEXELS_API_KEY = "replace-with-pexels-key"
+PEXELS_API_KEY = "YOUR_PEXELS_KEY_HERE"
 
 [image_processing]
 RESIZE_VARIANTS = "sm:300x200,md:768x432,lg:1280x720"
 
 # Voice Providers
 [elevenlabs]
-ELEVENLABS_API_KEY = "replace-with-elevenlabs-key"
-ELEVENLABS_VOICE_ID = "replace-with-voice-id"
+ELEVENLABS_API_KEY = ""
+ELEVENLABS_VOICE_ID = ""
 
 [azure_voice]
-AZURE_SPEECH_KEY = "replace-with-azure-speech-key"
+AZURE_SPEECH_KEY = "YOUR_SPEECH_KEY_HERE"
 AZURE_SPEECH_REGION = "eastus"
 AZURE_SPEECH_VOICE = "en-US-AriaNeural"
 
 [voice_storage]
-VOICE_BUCKET = "suvichaarapp"
+VOICE_BUCKET = "your-bucket-name"
 VOICE_PREFIX = "media/audio"
 
 # Database (Postgres / Azure Flexible Server)
 [database]
-DATABASE_URL = "postgresql+psycopg://user:password@host:5432/newslab"
+DATABASE_URL = "postgresql+psycopg://user:password@host:5432/dbname"
 

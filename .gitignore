@@ -48,6 +48,14 @@ config/settings.toml
 .env
 .env.*
 
+# Output files (generated HTML)
+output/
+output_old/
+
+# Test database files
+*.db
+test_stories.db
+
 # OS files
 Thumbs.db
 ehthumbs.db
