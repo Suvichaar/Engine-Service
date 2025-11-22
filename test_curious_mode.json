@@ -1,0 +1,16 @@
+{
+  "mode": "curious",
+  "template_key": "curious-template-1",
+  "slide_count": 7,
+  "user_input": "How does quantum computing work? Explain the basic principles, quantum bits (qubits), superposition, and entanglement.",
+  "image_source": "ai",
+  "prompt_keywords": [
+    "quantum",
+    "computing",
+    "science",
+    "technology",
+    "physics"
+  ],
+  "voice_engine": "azure_basic"
+}
+

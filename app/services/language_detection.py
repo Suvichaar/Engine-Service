@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol, Tuple
+from typing import Any, Callable, Optional, Protocol, Tuple
 
+import httpx
 from pydantic import ValidationError
 
 from app.domain.dto import IntakePayload, LanguageMetadata
@@ -110,4 +111,51 @@ class DefaultLanguageDetectionService(LanguageDetectionService):
 
     def _preview(self, text: str, max_length: int = 200) -> str:
         return text[:max_length]
+
+
+class AzureLanguageDetectionStrategy(LanguageDetectionStrategy):
+    """Azure Translator-based language detection strategy."""
+
+    def __init__(
+        self,
+        endpoint: str,
+        api_key: str,
+        region: Optional[str] = None,
+        timeout: float = 10.0,
+    ) -> None:
+        self._endpoint = endpoint.rstrip("/") + "/translator/text/v3.0/detect"
+        self._api_key = api_key
+        self._region = region
+        self._timeout = timeout
+
+    def detect(self, text: str) -> DetectResult:
+        documents = [{"text": text[:5000]}]  # API max length per document
+        headers = {
+            "Ocp-Apim-Subscription-Key": self._api_key,
+            "Content-Type": "application/json",
+        }
+        if self._region:
+            headers["Ocp-Apim-Subscription-Region"] = self._region
+        last_error: Exception | None = None
+        for _ in range(3):
+            try:
+                with httpx.Client(timeout=self._timeout) as client:
+                    response = client.post(self._endpoint, json=documents, headers=headers)
+                    response.raise_for_status()
+                    payload = response.json()
+                break
+            except Exception as exc:  # pragma: no cover - network failure fallback
+                last_error = exc
+        else:
+            if last_error:
+                raise last_error
+            payload = []
+
+        try:
+            language = payload[0]["language"]
+            score = float(payload[0]["score"])
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise ValueError(f"Unexpected Azure language response: {payload}") from exc
+
+        return language, max(0.0, min(1.0, score))
 

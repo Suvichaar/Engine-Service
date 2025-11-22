@@ -1,0 +1,21 @@
+{
+  "mode": "curious",
+  "template_key": "test-news-1",
+  "slide_count": 4,
+  "category": "Art",
+  "text_prompt": "The history of Renaissance art and its impact on modern culture",
+  "notes": "Focus on famous artists like Leonardo da Vinci and Michelangelo",
+  "urls": [
+    "https://example.com/renaissance-art"
+  ],
+  "attachments": [],
+  "prompt_keywords": [
+    "renaissance",
+    "art",
+    "history",
+    "culture"
+  ],
+  "image_source": "pexels",
+  "voice_engine": "azure_basic"
+}
+

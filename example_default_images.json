@@ -1,0 +1,10 @@
+{
+  "mode": "news",
+  "template_key": "test-news-1",
+  "slide_count": 4,
+  "category": "News",
+  "user_input": "https://indianexpress.com/article/cities/pune/killed-injured-pune-accident-navale-bridge-selfie-point-10363830/",
+  "image_source": null,
+  "voice_engine": "azure_basic"
+}
+

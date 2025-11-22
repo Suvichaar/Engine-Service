@@ -104,7 +104,9 @@ class SlideAssemblyService(Protocol):
 class ImageAssetPipeline(Protocol):
     """Generate or fetch slide images and upload them to storage."""
 
-    def process(self, deck: SlideDeck, payload: IntakePayload) -> list[ImageAsset]:
+    def process(
+        self, deck: SlideDeck, payload: IntakePayload, article_images: Optional[list[str]] = None
+    ) -> list[ImageAsset]:
         """Return image assets keyed to slide placeholders."""
 
 

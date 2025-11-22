@@ -1,0 +1,10 @@
+{
+  "mode": "news",
+  "template_key": "https://example.com/template.html",
+  "slide_count": 4,
+  "category": "News",
+  "user_input": "https://example.com/article",
+  "image_source": "pexels",
+  "voice_engine": "azure_basic"
+}
+

@@ -12,5 +12,6 @@ __all__ = [
     "image_pipeline",
     "voice_synthesis",
     "orchestrator",
+    "html_renderer",
 ]
 

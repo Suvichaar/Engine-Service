@@ -39,6 +39,7 @@ class IntakePayload(BaseModel):
     voice_engine: Optional[constr(pattern="^(elevenlabs_pro|azure_basic)$")] = Field(
         default=None, description="Selected text-to-speech provider."
     )
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata for pipeline processing.")
 
 
 class LanguageMetadata(BaseModel):
@@ -94,6 +95,7 @@ class DocInsights(BaseModel):
     entities: EntityMap = Field(default_factory=EntityMap, description="Named entities discovered in the sources.")
     gaps: List[str] = Field(default_factory=list, description="Knowledge gaps identified by analyzers.")
     recommended_prompts: List[str] = Field(default_factory=list, description="Suggestions for downstream prompting.")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata (e.g., article images).")
 
 
 class TopicCluster(BaseModel):

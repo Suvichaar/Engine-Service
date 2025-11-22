@@ -14,6 +14,14 @@ class StoryCreateRequest(BaseModel):
     template_key: str
     slide_count: SlideCount
     category: Optional[str] = None
+    
+    # NEW: Unified input (ChatGPT-style) - auto-detects URLs, text, or files
+    user_input: Optional[str] = Field(
+        default=None,
+        description="Unified input: text, URL(s), or file reference. Auto-detected. If provided, takes precedence over separate fields."
+    )
+    
+    # LEGACY: Keep for backward compatibility
     text_prompt: Optional[str] = None
     notes: Optional[str] = None
     urls: List[HttpUrl] = Field(default_factory=list)

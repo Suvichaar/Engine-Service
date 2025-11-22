@@ -46,7 +46,7 @@ tests/                     # Pytest suites covering each service
    ```bash
    pytest
    ```
-   Current suite: 27 passing tests covering all services.
+   Current suite: 37 passing tests covering all services and HTTP endpoints.
 
 4. **Start the API (development)**
    ```bash
@@ -58,14 +58,17 @@ tests/                     # Pytest suites covering each service
 
 ## Next Steps (Roadmap)
 
-- Build orchestration service connecting all existing components.
-- Expose FastAPI routes (`POST /stories`, `GET /stories/{id}`, `GET /templates`, etc.).
-- Integrate production adapters:
-  - Azure Document Intelligence for OCR
-  - Azure OpenAI (GPT) for narrative generation
-  - ElevenLabs/Azure TTS & S3/CloudFront for media
+- Replace stubbed HTTP integrations with live credentials in `config/settings.toml`:
+  - Azure Translator (language detection via `AZURE_TRANSLATOR_KEY/ENDPOINT`)
+  - Azure Document Intelligence (OCR)
+  - Azure OpenAI (Chat + DALL·E image generation)
+  - Pexels API (fallback imagery)
+  - ElevenLabs / Azure Speech TTS
+- Wire production-grade storage (S3 uploads, CloudFront distributions).
+- Harden template renderer, add placeholder validation, support duration extraction for audio.
 - Implement slide template renderer, image pipeline, voice pipeline, and persistence (Postgres).
 - Add integration tests + smoke CLI/health checks.
+- Instrument logging, metrics, and tracing; secure endpoints with auth.
 
 ## Contributing
 

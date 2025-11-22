@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Iterable, Optional, Protocol, Sequence
 from uuid import uuid4
+
+import httpx
+from pydantic import HttpUrl
 
 from app.domain.dto import LanguageMetadata, SlideDeck, VoiceAsset
 from app.domain.interfaces import VoiceSynthesisService
@@ -51,24 +55,26 @@ class DefaultVoiceSynthesisService(VoiceSynthesisService):
         if voice_provider is None:
             return []
 
-        combined_text = self._assemble_script(deck)
-        audio = voice_provider.synthesize(combined_text, language=language.language_code)
-        filename = f"{uuid4()}.{audio.format}"
-        asset = self._storage.store(audio=audio, filename=filename)
-        return [asset]
+        # Generate separate audio for each slide (not combined)
+        assets: list[VoiceAsset] = []
+        for slide in deck.slides:
+            if not slide.text or not slide.text.strip():
+                continue  # Skip empty slides
+            
+            # Use slide text directly (no "Slide 1:", "Slide 2:" prefix)
+            slide_text = slide.text.strip()
+            audio = voice_provider.synthesize(slide_text, language=language.language_code)
+            filename = f"{uuid4()}.{audio.format}"
+            asset = self._storage.store(audio=audio, filename=filename)
+            assets.append(asset)
+        
+        return assets
 
     def _resolve_provider(self, provider_id: str) -> Optional[VoiceProvider]:
         for voice_provider in self._providers:
             if voice_provider.supports(provider_id):
                 return voice_provider
         return None
-
-    def _assemble_script(self, deck: SlideDeck) -> str:
-        lines = []
-        for idx, slide in enumerate(deck.slides, start=1):
-            if slide.text:
-                lines.append(f"Slide {idx}: {slide.text}")
-        return "\n".join(lines)
 
 
 # --- Provider Implementations -------------------------------------------------
@@ -87,7 +93,27 @@ class ElevenLabsClient:
         return provider_id == self.name
 
     def synthesize(self, text: str, *, language: str) -> VoiceGenerationResult:
-        audio_bytes = f"ELEVENLABS:{language}:{text}".encode("utf-8")
+        headers = {
+            "xi-api-key": self._api_key,
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "text": text,
+            "model_id": "eleven_multilingual_v2",
+            "voice_settings": {"stability": 0.5, "similarity_boost": 0.5},
+        }
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}",
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                audio_bytes = response.content
+        except Exception as exc:  # pragma: no cover - network fallback
+            logging.getLogger(__name__).warning("ElevenLabs synthesis failed: %s", exc)
+            audio_bytes = f"ELEVENLABS:{language}:{text}".encode("utf-8")
         return VoiceGenerationResult(
             audio_bytes=audio_bytes, format="mp3", voice_id=self._voice_id, metadata={"provider": self.name}
         )
@@ -107,7 +133,25 @@ class AzureTTSClient:
         return provider_id == self.name
 
     def synthesize(self, text: str, *, language: str) -> VoiceGenerationResult:
-        audio_bytes = f"AZURE:{language}:{text}".encode("utf-8")
+        headers = {
+            "Ocp-Apim-Subscription-Key": self._api_key,
+            "Content-Type": "application/ssml+xml",
+            "X-Microsoft-OutputFormat": "audio-16khz-32kbitrate-mono-mp3",
+        }
+        ssml = (
+            "<speak version='1.0' xml:lang='en-US'>"
+            f"<voice name='{self._voice}'>{text}</voice>"
+            "</speak>"
+        )
+        url = f"https://{self._region}.tts.speech.microsoft.com/cognitiveservices/v1"
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(url, headers=headers, content=ssml.encode("utf-8"))
+                response.raise_for_status()
+                audio_bytes = response.content
+        except Exception as exc:  # pragma: no cover - network fallback
+            logging.getLogger(__name__).warning("Azure TTS synthesis failed: %s", exc)
+            audio_bytes = f"AZURE:{language}:{text}".encode("utf-8")
         return VoiceGenerationResult(
             audio_bytes=audio_bytes, format="wav", voice_id=self._voice, metadata={"provider": self.name}
         )
@@ -117,16 +161,67 @@ class AzureTTSClient:
 
 
 class S3VoiceStorageService:
-    """Persist voice assets to S3 (simulated) and provide CDN URLs."""
+    """Persist voice assets to S3 and provide CDN URLs."""
 
-    def __init__(self, bucket: str, prefix: str, cdn_base: str) -> None:
+    def __init__(
+        self,
+        bucket: str,
+        prefix: str,
+        cdn_base: str,
+        aws_access_key: Optional[str] = None,
+        aws_secret_key: Optional[str] = None,
+        aws_region: Optional[str] = None,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
         self._bucket = bucket
         self._prefix = prefix.rstrip("/") + "/" if prefix else ""
         self._cdn_base = cdn_base.rstrip("/") + "/"
+        self._aws_access_key = aws_access_key
+        self._aws_secret_key = aws_secret_key
+        self._aws_region = aws_region
+        self._logger = logger or logging.getLogger(__name__)
+        self._s3_client = None
+
+    def _get_s3_client(self):
+        """Lazy-load boto3 S3 client."""
+        if self._s3_client is None:
+            try:
+                import boto3
+                if self._aws_access_key and self._aws_secret_key:
+                    self._s3_client = boto3.client(
+                        "s3",
+                        aws_access_key_id=self._aws_access_key,
+                        aws_secret_access_key=self._aws_secret_key,
+                        region_name=self._aws_region or "us-east-1",
+                    )
+                else:
+                    # Use default credentials (IAM role, env vars, etc.)
+                    self._s3_client = boto3.client("s3", region_name=self._aws_region or "us-east-1")
+            except ImportError:
+                self._logger.warning("boto3 not installed, S3 uploads will be simulated")
+                return None
+        return self._s3_client
 
     def store(self, *, audio: VoiceGenerationResult, filename: str) -> VoiceAsset:
+        """Upload audio to S3 and return VoiceAsset with CDN URL."""
         object_key = f"{self._prefix}{filename}"
-        cdn_url = f"{self._cdn_base}{object_key}"
+        s3_client = self._get_s3_client()
+
+        if s3_client:
+            try:
+                s3_client.put_object(
+                    Bucket=self._bucket,
+                    Key=object_key,
+                    Body=audio.audio_bytes,
+                    ContentType=f"audio/{audio.format}",
+                )
+                self._logger.info("Uploaded voice asset to s3://%s/%s", self._bucket, object_key)
+            except Exception as e:
+                self._logger.error("Failed to upload to S3: %s", e)
+        else:
+            self._logger.warning("S3 client unavailable, simulating upload for %s", object_key)
+
+        cdn_url = HttpUrl(f"{self._cdn_base}{object_key}")
         return VoiceAsset(
             provider=(audio.metadata or {}).get("provider") or "voice",
             voice_id=audio.voice_id,

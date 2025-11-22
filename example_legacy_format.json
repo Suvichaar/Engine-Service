@@ -1,0 +1,14 @@
+{
+  "mode": "news",
+  "template_key": "test-news-1",
+  "slide_count": 4,
+  "category": "News",
+  "text_prompt": "Breaking news: New technology breakthrough",
+  "notes": "Latest developments in AI research",
+  "urls": ["https://indianexpress.com/article/..."],
+  "attachments": [],
+  "prompt_keywords": ["technology", "AI", "innovation"],
+  "image_source": "pexels",
+  "voice_engine": "azure_basic"
+}
+

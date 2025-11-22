@@ -25,15 +25,35 @@ class DefaultIngestionAggregator(IngestionAggregator):
         )
 
     def _collect_text_segments(self, payload: IntakePayload, language: LanguageMetadata) -> list[str]:
+        """
+        Collect text segments with URL priority logic.
+        If URLs are provided, skip text_prompt (URL content is primary source).
+        Notes are used as additional context/guidance.
+        """
         segments: list[str] = []
-        if payload.text_prompt:
-            segments.append(payload.text_prompt.strip())
-        if payload.notes:
-            segments.append(payload.notes.strip())
+        
+        # URL Priority Logic: If URLs are provided, skip text_prompt
+        # (URL content will be extracted and used as primary source)
+        if payload.urls:
+            # URLs exist - skip text_prompt, use notes only as guidance
+            if payload.notes:
+                segments.append(f"[Additional Context]: {payload.notes.strip()}")
+            # text_prompt is skipped when URLs are present
+        else:
+            # No URLs - use text_prompt and notes normally
+            if payload.text_prompt:
+                segments.append(payload.text_prompt.strip())
+            if payload.notes:
+                segments.append(payload.notes.strip())
+        
+        # Keywords are always included (for story angle/focus)
         if payload.prompt_keywords:
             segments.append(" ".join(payload.prompt_keywords))
+        
+        # Language preview (if available)
         if language.source_text_preview:
             segments.append(language.source_text_preview.strip())
+        
         return segments
 
     def _normalize_attachments(self, attachments: Sequence[str]) -> list[AttachmentDescriptor]:
