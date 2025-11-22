@@ -1,4 +1,5 @@
-# Storytelling Newslab Service v2
+# Storytelling Service
+
 
 A production-ready FastAPI backend for generating interactive AMP Story slide decks from mixed multimedia inputs. Supports **News** (factual briefing) and **Curious** (explainable storytelling) modes with dynamic template rendering, AI image generation, voice synthesis, and S3 integration.
 
