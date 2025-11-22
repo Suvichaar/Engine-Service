@@ -2,17 +2,6 @@
 
 Modular FastAPI backend (in progress) for generating narrative slide decks from mixed multimedia inputs. The current codebase delivers fully-tested domain types and service layers that will power Curious (explainable storytelling) and News (factual briefing) experiences.
 
-## Project Status
-
-- ✅ Core domain models and interfaces
-- ✅ Service implementations (input normalization, language detection, ingestion, document intelligence, analysis, prompt selection, model routing, narrative generation)
-- ✅ Prompt configuration system
-- ✅ Configuration loader (`config/settings.example.toml`)
-- ✅ Extensive unit test suite (`pytest`)
-- 🚧 Orchestrator & FastAPI endpoints (next milestone)
-- 🚧 External adapters (Azure DI/LLM, ElevenLabs/Azure TTS, S3 media pipeline)
-- 🚧 Persistence & asset pipelines
-
 ## Repository Layout
 
 ```
