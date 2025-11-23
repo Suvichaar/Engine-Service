@@ -208,97 +208,18 @@ curl -X POST "http://localhost:8000/stories" \
 
 ---
 
-## News Scenario 4: AI Generated Images (image_source = "ai")
-
-**When to use**: When you want AI to generate images based on keywords and article content.
-
-**What happens**:
-- AI generates unique images for each slide based on `prompt_keywords` and slide content
-- Images are generated per slide (cover + middle slides)
-- Uses DALL-E 3 API
-
-### JSON Payload
-
-```json
-{
-  "mode": "news",
-  "template_key": "test-news-1",
-  "slide_count": 4,
-  "category": "News",
-  "user_input": "https://indianexpress.com/article/...",
-  "image_source": "ai",
-  "prompt_keywords": [
-    "technology",
-    "AI",
-    "innovation"
-  ],
-  "voice_engine": "azure_basic"
-}
-```
-
-### cURL Command
-
-```bash
-curl -X POST "http://localhost:8000/stories" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "mode": "news",
-    "template_key": "test-news-1",
-    "slide_count": 4,
-    "category": "News",
-    "user_input": "https://indianexpress.com/article/...",
-    "image_source": "ai",
-    "prompt_keywords": ["technology", "AI", "innovation"],
-    "voice_engine": "azure_basic"
-  }'
-```
-
 ---
 
-## News Scenario 5: Pexels Images (image_source = "pexels")
+**Note**: News mode only supports two image sources:
+- `image_source: null` → Default polaris images (see News Scenario 1)
+- `image_source: "custom"` → Custom uploaded images (see News Scenario 2)
 
-**When to use**: When you want royalty-free stock images from Pexels.
+News mode does **NOT** support:
+- ❌ `image_source: "ai"` (AI image generation)
+- ❌ `image_source: "pexels"` (Pexels stock images)
+- ❌ `prompt_keywords` (not used in News mode)
 
-**What happens**:
-- Fetches images from Pexels API based on `prompt_keywords`
-- Different images for each slide
-- Portrait orientation, medium size
-
-### JSON Payload
-
-```json
-{
-  "mode": "news",
-  "template_key": "test-news-1",
-  "slide_count": 4,
-  "category": "News",
-  "user_input": "https://indianexpress.com/article/...",
-  "image_source": "pexels",
-  "prompt_keywords": [
-    "technology",
-    "AI",
-    "innovation"
-  ],
-  "voice_engine": "azure_basic"
-}
-```
-
-### cURL Command
-
-```bash
-curl -X POST "http://localhost:8000/stories" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "mode": "news",
-    "template_key": "test-news-1",
-    "slide_count": 4,
-    "category": "News",
-    "user_input": "https://indianexpress.com/article/...",
-    "image_source": "pexels",
-    "prompt_keywords": ["technology", "AI", "innovation"],
-    "voice_engine": "azure_basic"
-  }'
-```
+For AI or Pexels images, use **Curious mode** instead.
 
 ---
 
@@ -471,15 +392,19 @@ curl -X POST "http://localhost:8000/stories" \
 | `slide_count` | integer | Yes | Total slides: **News** (4-10), **Curious** (7+) |
 | `category` | string | Optional | Story category (e.g., "News", "Technology") - Recommended for News mode |
 | `user_input` | string | Optional | Unified input: URL, text, or file reference (auto-detected). **Takes precedence** over separate fields |
-| `image_source` | string \| null | Optional | Image source: `null` (News only), `"custom"`, `"ai"`, `"pexels"` |
+| `image_source` | string \| null | Optional | Image source: `null` (News only - default images), `"custom"` (News only - custom images), `"ai"` (Curious only), `"pexels"` (Curious only) |
 | `attachments` | array | Optional | Image URLs/URIs (required if `image_source="custom"`) |
-| `prompt_keywords` | array | Optional | Keywords for AI/Pexels image generation |
+| `prompt_keywords` | array | Optional | Keywords for AI/Pexels image generation (Curious mode only, not used in News mode) |
 | `voice_engine` | string | Optional | Voice provider: `"azure_basic"` or `"elevenlabs_pro"` |
 
 ### Mode-Specific Notes
 
 #### News Mode
 - `image_source: null` → Uses default images (polariscover.png, polarisslide.png)
+- `image_source: "custom"` → Uses custom uploaded images (requires `attachments`)
+- ❌ `image_source: "ai"` → **NOT supported** in News mode
+- ❌ `image_source: "pexels"` → **NOT supported** in News mode
+- ❌ `prompt_keywords` → **NOT used** in News mode
 - `slide_count: 4` = 1 cover + 2 middle + 1 CTA
 - `category` is recommended for better content generation
 
@@ -559,6 +484,8 @@ curl -X POST "http://localhost:8000/stories" \
 |--------------|-------------|-----------------|--------|
 | `null` | Not needed | Not needed | Default images (polariscover.png, polarisslide.png) |
 | `"custom"` | HTTP/HTTPS URL | Not needed | Downloads image, uploads to S3, resizes to 720x1280 |
+| `"ai"` | Not needed | Not needed | ❌ **NOT supported in News mode** |
+| `"pexels"` | Not needed | Not needed | ❌ **NOT supported in News mode** |
 | `"custom"` | S3 URI (`s3://...`) | Not needed | Loads from S3, uploads with new key, resizes to 720x1280 |
 | `"ai"` | Not needed | Required | AI generates images based on keywords + slide content |
 | `"pexels"` | Not needed | Required | Fetches stock images from Pexels based on keywords |

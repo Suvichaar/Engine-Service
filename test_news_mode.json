@@ -1,0 +1,10 @@
+{
+  "mode": "news",
+  "template_key": "test-news-1",
+  "slide_count": 4,
+  "user_input": "Breaking news: Technology breakthrough in artificial intelligence research. Scientists have made significant progress in developing more efficient AI models.",
+  "image_source": null,
+  "voice_engine": "azure_basic",
+  "category": "Technology"
+}
+

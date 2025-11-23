@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import random
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Optional, Sequence
@@ -189,7 +191,13 @@ class StoryOrchestrator:
 
         story_id = self.id_factory()
         created_at = datetime.utcnow()
-        canurl, canurl1 = self._build_canurls(story_id)
+        
+        # Get story title for URL generation (News mode uses title-based URLs)
+        story_title = None
+        if payload.mode == Mode.NEWS and narrative.slide_deck.slides:
+            story_title = narrative.slide_deck.slides[0].text or None
+        
+        canurl, canurl1 = self._build_canurls(story_id, story_title=story_title, mode=payload.mode)
 
         record = StoryRecord(
             id=story_id,
@@ -267,11 +275,84 @@ class StoryOrchestrator:
         if analysis.narrative_summary:
             doc_insights.summaries = [analysis.narrative_summary]
 
-    def _build_canurls(self, story_id: UUID) -> tuple[Optional[str], Optional[str]]:
+    def _build_canurls(self, story_id: UUID, story_title: Optional[str] = None, mode: Optional[Mode] = None) -> tuple[Optional[str], Optional[str]]:
+        """
+        Build canonical URLs for the story.
+        
+        For News mode: Uses title-based slug + nano ID format
+        For other modes: Uses story_id format
+        
+        Args:
+            story_id: UUID of the story
+            story_title: Story title (used for News mode slug generation)
+            mode: Story mode (News or Curious)
+        
+        Returns:
+            Tuple of (canurl, canurl1)
+            - canurl: Primary URL (without .html for News mode)
+            - canurl1: Secondary URL (with .html for News mode, saved to S3)
+        """
         if not self.story_base_url:
             return None, None
+        
+        # For News mode, use title-based slug + nano ID format
+        if mode == Mode.NEWS and story_title:
+            try:
+                # Generate slug from title
+                slug = self._slugify_title(story_title)
+                
+                # Generate Nano ID (matching JavaScript Canurl function)
+                alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-'
+                size = 10
+                nano_id = ''.join(random.choices(alphabet, k=size))
+                nano = nano_id + "_G"
+                
+                slug_nano = f"{slug}_{nano}"
+                
+                # canurl1: with .html extension (for S3 storage)
+                # Format: https://stories.suvichaar.org/slug_nano.html
+                canurl1 = f"https://stories.suvichaar.org/{slug_nano}.html"
+                
+                # canurl: without .html extension (for display)
+                # Format: https://suvichaar.org/stories/slug_nano
+                canurl = f"https://suvichaar.org/stories/{slug_nano}"
+                
+                return canurl, canurl1
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning("Failed to generate title-based URLs, falling back to UUID: %s", e)
+                # Fallback to UUID-based URLs
+        
+        # For Curious mode or fallback: use story_id format
         base = self.story_base_url.rstrip("/")
         primary = f"{base}/{story_id}"
         secondary = f"{primary}?variant=alt"
         return primary, secondary
+    
+    def _slugify_title(self, title: str) -> str:
+        """
+        Slugify a title to create URL-friendly slug.
+        Matches JavaScript slugify logic:
+        - Convert to lowercase
+        - Replace spaces with hyphens
+        - Remove non-alphanumeric characters (except hyphens)
+        - Remove leading/trailing hyphens
+        """
+        if not title or not isinstance(title, str):
+            raise ValueError("Invalid title: Title must be a non-empty string.")
+        
+        # Step 1: Convert to lowercase
+        slug = title.lower()
+        
+        # Step 2: Replace spaces with hyphens
+        slug = re.sub(r'\s+', '-', slug)
+        
+        # Step 3: Remove non-alphanumeric characters (except hyphens)
+        slug = re.sub(r'[^a-z0-9-]', '', slug)
+        
+        # Step 4: Remove leading or trailing hyphens
+        slug = re.sub(r'^-+|-+$', '', slug)
+        
+        return slug
 

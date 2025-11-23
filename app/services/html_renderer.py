@@ -15,6 +15,7 @@ from pydantic import HttpUrl
 
 from app.domain.dto import ImageAsset, Mode, SlideBlock, SlideDeck, StoryRecord, VoiceAsset
 from app.services.template_slide_generators import get_slide_generator
+from app.services.model_clients import LanguageModel
 
 
 class TemplateLoader:
@@ -118,6 +119,7 @@ class PlaceholderMapper:
         organization: str = "Suvichaar",
         cdn_prefix_media: str = "https://media.suvichaar.org/",
         aws_bucket: str = "suvichaarapp",
+        language_model: Optional[LanguageModel] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._default_bg_image = default_bg_image
@@ -125,6 +127,7 @@ class PlaceholderMapper:
         self._organization = organization
         self._cdn_prefix_media = cdn_prefix_media.rstrip("/") + "/"
         self._aws_bucket = aws_bucket
+        self._language_model = language_model
         self._logger = logger or logging.getLogger(__name__)
 
     def map(self, record: StoryRecord, image_source: Optional[str] = None) -> dict[str, str]:
@@ -272,14 +275,25 @@ class PlaceholderMapper:
         placeholders["metadescription"] = self._generate_meta_description(record)
         placeholders["metakeywords"] = self._generate_meta_keywords(record)
         placeholders["category"] = record.category or "News"
-        placeholders["lang"] = record.input_language or "en-US"
+        
+        # Normalize language to en-US or hi-IN format
+        lang = record.input_language or "en"
+        if lang == "en" or lang.startswith("en"):
+            placeholders["lang"] = "en-US"
+        elif lang == "hi" or lang.startswith("hi"):
+            placeholders["lang"] = "hi-IN"
+        else:
+            # If already in correct format (en-US, hi-IN) or other format, use as-is
+            placeholders["lang"] = lang if "-" in lang else f"{lang}-US"
+        
+        # Content type: News for News mode, Article for Curious mode
         placeholders["contenttype"] = "News" if record.mode == Mode.NEWS else "Article"
 
         # URLs
         placeholders["canurl"] = str(record.canurl) if record.canurl else ""
         placeholders["canurl1"] = str(record.canurl1) if record.canurl1 else ""
 
-        # Timestamps
+        # Timestamps - ISO 8601 format with Z suffix (e.g., "2025-01-21T10:30:00.000000Z")
         iso_time = record.created_at.isoformat() + "Z"
         placeholders["publishedtime"] = iso_time
         placeholders["modifiedtime"] = iso_time
@@ -365,7 +379,59 @@ class PlaceholderMapper:
             return f"{self._cdn_prefix_media}{s3_key}"
 
     def _generate_meta_description(self, record: StoryRecord) -> str:
-        """Generate SEO meta description from story content."""
+        """Generate SEO meta description from story content using LLM if available, else fallback."""
+        # Try LLM-based generation first
+        if self._language_model and record.slide_deck.slides:
+            try:
+                story_title = record.slide_deck.slides[0].text or "Web Story"
+                # Collect slide content for context (use first 5 slides)
+                slide_contents = []
+                for idx, slide in enumerate(record.slide_deck.slides[:5], start=1):
+                    if slide.text:
+                        slide_contents.append(f"Slide {idx}: {slide.text[:200]}")
+                
+                slides_text = "\n".join(slide_contents) if slide_contents else "No content available"
+                language = record.input_language or "en"
+                lang_code = language.split("-")[0] if "-" in language else language
+                
+                system_prompt = "You are an expert SEO assistant. Generate concise, engaging meta descriptions for web stories. Always respond with just the meta description text, no quotes or labels."
+                user_prompt = f"""Generate a short SEO-friendly meta description (max 160 characters) for a web story.
+
+Title: {story_title}
+Content:
+{slides_text}
+
+Language: {lang_code}
+
+Requirements:
+- Maximum 160 characters
+- Engaging and informative
+- Include key topics
+- Write in {lang_code} language
+- No quotes or special formatting
+- Just the description text, nothing else
+
+Meta Description:"""
+
+                meta_desc = self._language_model.complete(system_prompt, user_prompt)
+                # Clean up the response (remove quotes, extra whitespace, labels)
+                meta_desc = meta_desc.strip()
+                # Remove quotes
+                meta_desc = meta_desc.strip('"').strip("'")
+                # Remove common prefixes/labels
+                for prefix in ["Meta Description:", "Description:", "Description"]:
+                    if meta_desc.startswith(prefix):
+                        meta_desc = meta_desc[len(prefix):].strip().strip(":").strip()
+                # Ensure it's within 160 characters
+                if len(meta_desc) > 160:
+                    meta_desc = meta_desc[:157] + "..."
+                if meta_desc and len(meta_desc) > 20:  # Valid response
+                    self._logger.info("Generated meta description using LLM: %s", meta_desc[:80])
+                    return meta_desc
+            except Exception as e:
+                self._logger.warning("LLM meta description generation failed, using fallback: %s", e)
+        
+        # Fallback to simple text extraction
         if record.slide_deck.slides:
             first_slide = record.slide_deck.slides[0].text or ""
             if len(first_slide) > 160:
@@ -374,11 +440,71 @@ class PlaceholderMapper:
         return f"Explore this {record.category or 'story'} on Suvichaar."
 
     def _generate_meta_keywords(self, record: StoryRecord) -> str:
-        """Generate SEO keywords."""
+        """Generate SEO keywords using LLM if available, else fallback."""
+        # Try LLM-based generation first
+        if self._language_model and record.slide_deck.slides:
+            try:
+                story_title = record.slide_deck.slides[0].text or "Web Story"
+                # Collect slide content for context (use first 5 slides)
+                slide_contents = []
+                for idx, slide in enumerate(record.slide_deck.slides[:5], start=1):
+                    if slide.text:
+                        slide_contents.append(f"Slide {idx}: {slide.text[:200]}")
+                
+                slides_text = "\n".join(slide_contents) if slide_contents else "No content available"
+                language = record.input_language or "en"
+                lang_code = language.split("-")[0] if "-" in language else language
+                category = record.category or "Story"
+                
+                system_prompt = "You are an expert SEO assistant. Generate relevant keywords for web stories. Always respond with just comma-separated keywords, no quotes or labels."
+                user_prompt = f"""Generate 8-12 relevant SEO keywords (comma-separated) for a web story.
+
+Title: {story_title}
+Category: {category}
+Content:
+{slides_text}
+
+Language: {lang_code}
+
+Requirements:
+- 8-12 keywords
+- Comma-separated
+- Relevant to the content
+- Include category and topic keywords
+- Mix of broad and specific terms
+- Write in {lang_code} language
+- Just the keywords, nothing else
+
+Keywords:"""
+
+                keywords = self._language_model.complete(system_prompt, user_prompt)
+                # Clean up the response (remove quotes, extra whitespace, labels)
+                keywords = keywords.strip()
+                # Remove quotes
+                keywords = keywords.strip('"').strip("'")
+                # Remove common prefixes/labels
+                for prefix in ["Keywords:", "Keywords", "Meta Keywords:", "Meta Keywords", "Keyword:"]:
+                    if keywords.startswith(prefix):
+                        keywords = keywords[len(prefix):].strip().strip(":").strip()
+                # Ensure reasonable length (max 200 chars for keywords)
+                if len(keywords) > 200:
+                    keywords = keywords[:200].rsplit(",", 1)[0]  # Cut at last comma before 200 chars
+                if keywords and len(keywords) > 5:  # Valid response
+                    self._logger.info("Generated meta keywords using LLM: %s", keywords[:100])
+                    return keywords
+            except Exception as e:
+                self._logger.warning("LLM meta keywords generation failed, using fallback: %s", e)
+        
+        # Fallback to simple keyword generation
         keywords = [record.category or "story"]
         if record.input_language:
             keywords.append(record.input_language)
         keywords.append("web story")
+        if record.mode == Mode.NEWS:
+            keywords.append("news")
+        elif record.mode == Mode.CURIOUS:
+            keywords.append("education")
+            keywords.append("curious")
         return ", ".join(keywords)
 
 
@@ -390,13 +516,16 @@ class HTMLTemplateRenderer:
         template_base_path: Optional[Path] = None,
         template_loader: Optional[TemplateLoader] = None,
         placeholder_mapper: Optional[PlaceholderMapper] = None,
+        language_model: Optional[LanguageModel] = None,
         cdn_prefix_media: str = "https://media.suvichaar.org/",
         aws_bucket: str = "suvichaarapp",
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._loader = template_loader or TemplateLoader(template_base_path=template_base_path)
         self._mapper = placeholder_mapper or PlaceholderMapper(
-            cdn_prefix_media=cdn_prefix_media, aws_bucket=aws_bucket
+            cdn_prefix_media=cdn_prefix_media,
+            aws_bucket=aws_bucket,
+            language_model=language_model,
         )
         self._logger = logger or logging.getLogger(__name__)
 

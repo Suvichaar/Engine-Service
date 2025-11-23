@@ -219,11 +219,12 @@ def get_orchestrator() -> StoryOrchestrator:
     else:
         repository = NoOpStoryRepository()
 
-    # HTML Template Renderer
+    # HTML Template Renderer (pass language_model for SEO metadata generation)
     html_renderer = HTMLTemplateRenderer(
         template_base_path=Path("app/news_template"),
         cdn_prefix_media=settings.aws.cdn_prefix_media,
         aws_bucket=settings.aws.bucket,
+        language_model=language_model,  # Pass language model for LLM-based SEO generation
     )
 
     return StoryOrchestrator(
