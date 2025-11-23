@@ -241,7 +241,7 @@ def get_orchestrator() -> StoryOrchestrator:
         html_renderer=html_renderer,
         default_voice_provider=default_voice_provider or "azure_basic",
         story_base_url=settings.aws.cdn_html_base,
-        save_to_database=False,  # Disable database saving to avoid connection errors
+        save_to_database=session_factory is not None,  # Enable database saving if database is available
     )
 
 
@@ -390,8 +390,23 @@ def create_story(request: StoryCreateRequest, orchestrator: StoryOrchestrator = 
 
 @app.get("/stories/{story_id}", response_model=StoryResponse)
 def get_story(story_id: str, orchestrator: StoryOrchestrator = Depends(get_orchestrator)):
+    """
+    Get story by UUID or slug.
+    If story_id looks like a UUID, use UUID lookup.
+    Otherwise, treat it as a slug and look up by canurl.
+    """
+    import re
+    from uuid import UUID
+    
     try:
-        record = orchestrator.get_story(story_id)
+        # Check if story_id is a valid UUID format
+        uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+        if uuid_pattern.match(story_id):
+            # It's a UUID, use regular lookup
+            record = orchestrator.get_story(story_id)
+        else:
+            # It's a slug, use slug-based lookup
+            record = orchestrator.get_story_by_slug(story_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Story not found") from exc
     return StoryResponse.model_validate(record.model_dump())

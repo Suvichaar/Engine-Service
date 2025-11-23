@@ -237,7 +237,46 @@ class StoryOrchestrator:
                     story_id=story_id,
                 )
                 import logging
-                logging.getLogger(__name__).info("HTML saved to: %s", html_file_path)
+                logger = logging.getLogger(__name__)
+                logger.info("HTML saved to: %s", html_file_path)
+                
+                # For News mode, upload HTML to S3 bucket "suvichaarstories" with slug-based filename
+                if payload.mode == Mode.NEWS and record.canurl1:
+                    try:
+                        # Extract slug filename from canurl1: https://stories.suvichaar.org/slug_nano.html -> slug_nano.html
+                        canurl1_str = str(record.canurl1)
+                        if "stories.suvichaar.org/" in canurl1_str:
+                            slug_filename = canurl1_str.split("stories.suvichaar.org/")[-1]
+                            # slug_filename should be like "tragic-accident-near-navale-bridge-leaves-several-dead-and-injured-in-pune_KKd2kdX729_G.html"
+                            
+                            # Get AWS settings
+                            from app.config import get_settings
+                            settings = get_settings()
+                            
+                            # Upload to S3 bucket "suvichaarstories" with slug-based filename
+                            import boto3
+                            s3_client = boto3.client(
+                                "s3",
+                                aws_access_key_id=settings.aws.access_key,
+                                aws_secret_access_key=settings.aws.secret_key,
+                                region_name=settings.aws.region or "us-east-1",
+                            )
+                            
+                            s3_client.put_object(
+                                Bucket="suvichaarstories",
+                                Key=slug_filename,  # Use slug-based filename (e.g., "slug_nano.html")
+                                Body=html_content.encode("utf-8"),
+                                ContentType="text/html; charset=utf-8",
+                            )
+                            
+                            logger.info("Uploaded HTML to S3: s3://suvichaarstories/%s", slug_filename)
+                    except ImportError:
+                        logger.warning("boto3 not installed, S3 HTML upload skipped")
+                    except Exception as e:
+                        logger.warning("Failed to upload HTML to S3 (non-critical): %s", e)
+                        logger.debug("S3 upload error details:", exc_info=True)
+                        # Continue without S3 upload - story creation should succeed
+                        
             except Exception as e:
                 # Log error but don't fail story creation - HTML saving is optional
                 import logging
@@ -250,6 +289,43 @@ class StoryOrchestrator:
 
     def get_story(self, story_id: str) -> StoryRecord:
         return self.repository.get(story_id)
+
+    def get_story_by_slug(self, slug: str) -> StoryRecord:
+        """
+        Get story by slug from URL.
+        Handles both full URLs and just the slug part.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Extract slug from URL if full URL is provided
+        # e.g., "https://stories.suvichaar.org/slug_nano" -> "slug_nano"
+        # or "tragic-crash-near-navale-bridge-in-pune-leaves-several-dead-and-injured_PYDH_6ImHU_G"
+        if "/" in slug:
+            # Extract the last part after the last slash
+            slug = slug.split("/")[-1]
+            # Remove .html extension if present
+            if slug.endswith(".html"):
+                slug = slug[:-5]
+        
+        # Try to find by canurl (without .html)
+        canurl = f"https://stories.suvichaar.org/{slug}"
+        canurl1 = f"https://stories.suvichaar.org/{slug}.html"
+        
+        try:
+            # First try exact match with canurl
+            return self.repository.get_by_canurl(canurl)
+        except KeyError:
+            try:
+                # Then try with canurl1
+                return self.repository.get_by_canurl(canurl1)
+            except KeyError:
+                # Finally try with just the slug part
+                try:
+                    return self.repository.get_by_canurl(slug)
+                except KeyError:
+                    logger.error("Story not found for slug: %s (tried: %s, %s, %s)", slug, canurl, canurl1, slug)
+                    raise KeyError(f"Story with slug {slug} not found.")
 
     def _build_intake_payload(self, request: StoryCreateRequest) -> IntakePayload:
         return self.user_input_service.build_payload(
@@ -309,13 +385,13 @@ class StoryOrchestrator:
                 
                 slug_nano = f"{slug}_{nano}"
                 
+                # canurl: without .html extension (for display)
+                # Format: https://stories.suvichaar.org/slug_nano
+                canurl = f"https://stories.suvichaar.org/{slug_nano}"
+                
                 # canurl1: with .html extension (for S3 storage)
                 # Format: https://stories.suvichaar.org/slug_nano.html
                 canurl1 = f"https://stories.suvichaar.org/{slug_nano}.html"
-                
-                # canurl: without .html extension (for display)
-                # Format: https://suvichaar.org/stories/slug_nano
-                canurl = f"https://suvichaar.org/stories/{slug_nano}"
                 
                 return canurl, canurl1
             except Exception as e:

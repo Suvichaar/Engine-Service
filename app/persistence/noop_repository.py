@@ -17,6 +17,10 @@ class NoOpStoryRepository(StoryRepository):
         """No-op: raise error since we don't store anything."""
         raise KeyError(f"Story with id {story_id} not found (database not in use).")
 
+    def get_by_canurl(self, canurl: str) -> StoryRecord:
+        """No-op: raise error since we don't store anything."""
+        raise KeyError(f"Story with URL {canurl} not found (database not in use).")
+
 
 __all__ = ["NoOpStoryRepository"]
 

@@ -70,6 +70,26 @@ class SqlAlchemyStoryRepository(StoryRepository):
                 raise KeyError(f"Story with id {story_id} not found.")
             return self._deserialize(orm)
 
+    def get_by_canurl(self, canurl: str) -> StoryRecord:
+        """Load a story record by its canonical URL (slug)."""
+        from sqlalchemy.orm import Session
+        from sqlalchemy import or_
+
+        with self._session_factory() as session:  # type: Session
+            # Search in both canurl and canurl1 fields
+            orm = session.query(StoryORM).filter(
+                or_(
+                    StoryORM.canurl == canurl,
+                    StoryORM.canurl1 == canurl,
+                    StoryORM.canurl.like(f"%{canurl}%"),
+                    StoryORM.canurl1.like(f"%{canurl}%")
+                )
+            ).first()
+            
+            if orm is None:
+                raise KeyError(f"Story with URL {canurl} not found.")
+            return self._deserialize(orm)
+
     def _serialize(self, record: StoryRecord) -> Dict[str, Any]:
         return {
             "id": str(record.id),

@@ -126,3 +126,6 @@ class StoryRepository(Protocol):
     def get(self, story_id: str) -> StoryRecord:
         """Load a story record by its identifier."""
 
+    def get_by_canurl(self, canurl: str) -> StoryRecord:
+        """Load a story record by its canonical URL (slug)."""
+

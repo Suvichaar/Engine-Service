@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+*.egg-info/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Build artifacts
+build/
+dist/
+*.log
+
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Notebooks
+.ipynb_checkpoints
+
+# Local configs / secrets (IMPORTANT: Don't include secrets in Docker image)
+config/settings.toml
+.env
+.env.*
+
+# Output files
+output/
+output_old/
+
+# Test files
+*.db
+test_stories.db
+tests/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Documentation
+*.md
+!README.md
+
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Streamlit
+.streamlit/
+
