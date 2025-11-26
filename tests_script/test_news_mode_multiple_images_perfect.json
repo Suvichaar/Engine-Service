@@ -1,0 +1,20 @@
+{
+  "description": "Test News mode with perfect image count (4 images for 4 slides)",
+  "mode": "news",
+  "template_key": "test-news-1",
+  "slide_count": 4,
+  "user_input": "https://indianexpress.com/article/cities/pune/killed-injured-pune-accident-navale-bridge-selfie-point-10363830/",
+  "category": "News",
+  "image_source": "custom",
+  "attachments": [
+    "https://example.com/slide1-cover.jpg",
+    "https://example.com/slide2-middle1.jpg",
+    "https://example.com/slide3-middle2.jpg",
+    "https://example.com/slide4-cta.jpg"
+  ],
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "image_usage": "Each slide gets unique image: slide1→image1, slide2→image2, slide3→image3, slide4→image4",
+    "graceful_handling": "Perfect match, no warnings"
+  }
+}

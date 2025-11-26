@@ -53,25 +53,35 @@ class TemplateLoader:
             template_key = template_key.split("/")[-1].replace(".html", "")
             self._logger.info("Extracted template name '%s' from URL: %s", template_key, original_key)
         
+        # Determine base directory for templates
+        # If template_base_path is app/news_template, use parent (app/)
+        # If template_base_path is app/, use it directly
+        if self._template_base_path.name.endswith("_template"):
+            base_dir = self._template_base_path.parent
+        else:
+            base_dir = self._template_base_path
+        
         # Try mode-specific template directory first
-        mode_dir = self._template_base_path.parent / f"{mode.value}_template"
+        mode_dir = base_dir / f"{mode.value}_template"
         if not mode_dir.exists():
             # Fallback: try news_template if mode-specific dir doesn't exist
-            fallback_dir = self._template_base_path.parent / "news_template"
+            fallback_dir = base_dir / "news_template"
             if fallback_dir.exists():
                 mode_dir = fallback_dir
                 self._logger.warning("Mode-specific template dir not found, using fallback: %s", mode_dir)
             else:
-                mode_dir = self._template_base_path  # Last resort
+                # Last resort: use template_base_path as-is
+                mode_dir = self._template_base_path
+                self._logger.warning("Using template_base_path as last resort: %s", mode_dir)
 
         template_path = mode_dir / f"{template_key}.html"
         if not template_path.exists():
             # Try without extension
             template_path = mode_dir / template_key
             if not template_path.exists():
-                raise FileNotFoundError(f"Template not found: {template_path} (mode: {mode.value})")
+                raise FileNotFoundError(f"Template not found: {template_path} (mode: {mode.value}, base_dir: {base_dir}, mode_dir: {mode_dir})")
 
-        self._logger.info("Loading template from file: %s (mode: %s)", template_path, mode.value)
+        self._logger.info("Loading template from file: %s (mode: %s, base_dir: %s)", template_path, mode.value, base_dir)
         return template_path.read_text(encoding="utf-8")
 
     def _load_from_url(self, url: str) -> str:
@@ -148,14 +158,20 @@ class PlaceholderMapper:
             placeholders[f"s{idx}paragraph1"] = slide.text or ""
 
         # Images - Special handling for News mode with no image_source
-        if record.mode == Mode.NEWS and not record.image_assets:
-            # News mode + no image_source → use default polariscover.png
+        # Ensure default images for cover and CTA slides when image_source is None, "", or "default"
+        self._logger.info("Mapping images - mode: %s, image_source: %s, has_assets: %s", 
+                         record.mode, image_source, len(record.image_assets) if record.image_assets else 0)
+        
+        if record.mode == Mode.NEWS and (image_source is None or image_source == "" or image_source == "default"):
+            # News mode + no image_source → use default polariscover.png for cover and CTA
             default_cover = self._default_cover_image
+            self._logger.info("News mode with default images: setting potraitcoverurl to %s", default_cover)
             placeholders["image0"] = default_cover
-            # Generate resized URLs for portrait cover (720x1280) and thumbnail (300x300)
-            placeholders["potraitcoverurl"] = self._generate_resized_url(default_cover, 720, 1280)
-            placeholders["portraitcoverurl"] = placeholders["potraitcoverurl"]  # Alternative spelling
-            placeholders["msthumbnailcoverurl"] = self._generate_resized_url(default_cover, 300, 300)
+            # ALWAYS use direct default URL for News mode default images (no resize needed)
+            placeholders["potraitcoverurl"] = default_cover
+            placeholders["portraitcoverurl"] = default_cover  # Alternative spelling
+            placeholders["msthumbnailcoverurl"] = default_cover
+            self._logger.info("Set potraitcoverurl = %s", placeholders["potraitcoverurl"])
         elif image_source == "custom" and record.image_assets and len(record.image_assets) > 0:
             # Custom image_source → use custom image for cover slide too
             asset = record.image_assets[0]  # Cover image is at index 0
@@ -201,16 +217,36 @@ class PlaceholderMapper:
                     placeholders["msthumbnailcoverurl"] = self._generate_resized_url(cover_url, 300, 300)
             else:
                 # No assets, use default with resizing
-                placeholders["potraitcoverurl"] = self._generate_resized_url(cover_url, 720, 1280)
-                placeholders["portraitcoverurl"] = placeholders["potraitcoverurl"]
-                placeholders["msthumbnailcoverurl"] = self._generate_resized_url(cover_url, 300, 300)
+                # For News mode, ensure default cover image is used for cover and CTA slides
+                if record.mode == Mode.NEWS and (image_source is None or image_source == "" or image_source == "default"):
+                    # Use default cover image for News mode
+                    default_cover = self._default_cover_image
+                    try:
+                        placeholders["potraitcoverurl"] = self._generate_resized_url(default_cover, 720, 1280)
+                    except Exception:
+                        placeholders["potraitcoverurl"] = default_cover
+                    placeholders["portraitcoverurl"] = placeholders["potraitcoverurl"]
+                    try:
+                        placeholders["msthumbnailcoverurl"] = self._generate_resized_url(default_cover, 300, 300)
+                    except Exception:
+                        placeholders["msthumbnailcoverurl"] = default_cover
+                else:
+                    try:
+                        placeholders["potraitcoverurl"] = self._generate_resized_url(cover_url, 720, 1280)
+                    except Exception:
+                        placeholders["potraitcoverurl"] = cover_url
+                    placeholders["portraitcoverurl"] = placeholders["potraitcoverurl"]
+                    try:
+                        placeholders["msthumbnailcoverurl"] = self._generate_resized_url(cover_url, 300, 300)
+                    except Exception:
+                        placeholders["msthumbnailcoverurl"] = cover_url
 
         # Slide images (s1image1, s2image1, etc.)
         # Special handling for News mode:
-        # - If image_source is blank/null → use default polarisslide.png for all slides
+        # - If image_source is blank/null/default → use default polarisslide.png for all slides
         # - If image_source is "custom" → use image_assets mapped to s1image1, s2image1, etc.
         # - Otherwise → use image_assets or default
-        if record.mode == Mode.NEWS and (image_source is None or image_source == ""):
+        if record.mode == Mode.NEWS and (image_source is None or image_source == "" or image_source == "default"):
             # News mode + blank image_source → use default polarisslide.png for all slides
             for idx in range(1, len(record.slide_deck.slides) + 1):
                 placeholders[f"s{idx}image1"] = self._default_bg_image
@@ -318,6 +354,17 @@ class PlaceholderMapper:
         placeholders["nextstorylink"] = ""
         # msthumbnailcoverurl is already set above in Images section
 
+        # Ensure potraitcoverurl is always set (critical for cover and CTA slides)
+        potraitcoverurl_value = placeholders.get("potraitcoverurl", "").strip()
+        if not potraitcoverurl_value or potraitcoverurl_value == "{{potraitcoverurl}}" or potraitcoverurl_value.startswith("{{"):
+            # Fallback to default cover image if not set or invalid
+            placeholders["potraitcoverurl"] = self._default_cover_image
+            placeholders["portraitcoverurl"] = self._default_cover_image
+            self._logger.warning("potraitcoverurl was not set or invalid (%s), using default cover image: %s", 
+                               potraitcoverurl_value, self._default_cover_image)
+        else:
+            self._logger.info("Final potraitcoverurl value: %s", placeholders["potraitcoverurl"])
+        
         return placeholders
 
     def _get_image_url(self, image_assets: list[ImageAsset], index: int, default: str) -> str:
@@ -542,9 +589,24 @@ class HTMLTemplateRenderer:
 
         # 2. Map StoryRecord to placeholders (pass image_source for proper image handling)
         placeholders = self._mapper.map(record, image_source=image_source)
+        
+        # Debug: Log placeholder values
+        self._logger.info("Placeholders after mapping - potraitcoverurl: %s", placeholders.get("potraitcoverurl", "NOT SET"))
+        self._logger.info("Image source passed: %s, Mode: %s", image_source, record.mode)
 
         # 3. Replace basic placeholders
         filled_html = self._replace_placeholders(template_html, placeholders)
+        
+        # Debug: Check if placeholder was replaced
+        if "{{potraitcoverurl}}" in filled_html:
+            self._logger.error("ERROR: potraitcoverurl placeholder was NOT replaced in HTML!")
+            # Try to find where it appears
+            import re
+            matches = re.findall(r'[^"]*\{\{potraitcoverurl\}\}[^"]*', filled_html)
+            if matches:
+                self._logger.error("Found unreplaced placeholder in: %s", matches[0][:200])
+        else:
+            self._logger.info("SUCCESS: potraitcoverurl placeholder was replaced")
 
         # 4. Generate slides dynamically (pass template_key and image_source for template-specific generation)
         slides_html = self._generate_all_slides(record, template_key, placeholders, image_source=image_source)
@@ -554,6 +616,13 @@ class HTMLTemplateRenderer:
 
         # 6. Cleanup (remove stray curly braces from URLs)
         filled_html = self._cleanup_urls(filled_html)
+        
+        # Final check: Ensure potraitcoverurl is replaced (critical for cover and CTA)
+        if "{{potraitcoverurl}}" in filled_html:
+            self._logger.error("CRITICAL: potraitcoverurl still not replaced after cleanup! Replacing with default.")
+            default_url = "https://media.suvichaar.org/upload/polaris/polariscover.png"
+            filled_html = filled_html.replace("{{potraitcoverurl}}", default_url)
+            filled_html = filled_html.replace("{{portraitcoverurl}}", default_url)
 
         return filled_html
 

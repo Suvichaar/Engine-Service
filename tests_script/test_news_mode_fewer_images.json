@@ -1,0 +1,19 @@
+{
+  "description": "Test News mode with fewer images (2 images for 4 slides)",
+  "mode": "news",
+  "template_key": "test-news-1",
+  "slide_count": 4,
+  "user_input": "Sports update: Local team wins championship after intense final match.",
+  "category": "Sports",
+  "image_source": "custom",
+  "attachments": [
+    "https://example.com/slide1-cover.jpg",
+    "https://example.com/slide2-middle1.jpg"
+  ],
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "image_usage": "First 2 images used, last image repeated for remaining slides",
+    "graceful_handling": "Warning: Last image will be repeated for remaining slides",
+    "mapping": "slide1→image1, slide2→image2, slide3→image2(repeated), slide4→image2(repeated)"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "description": "Test Curious mode with extra images (10 images for 7 slides)",
+  "mode": "curious",
+  "template_key": "curious-template-1",
+  "slide_count": 7,
+  "user_input": "History of ancient civilizations and their contributions.",
+  "category": "History",
+  "image_source": "custom",
+  "attachments": [
+    "https://example.com/ancient-cover.jpg",
+    "https://example.com/egypt-pyramids.jpg",
+    "https://example.com/rome-colosseum.jpg",
+    "https://example.com/greece-parthenon.jpg",
+    "https://example.com/china-wall.jpg",
+    "https://example.com/india-temples.jpg",
+    "https://example.com/maya-pyramid.jpg",
+    "https://example.com/extra-babylon.jpg",
+    "https://example.com/extra-persia.jpg",
+    "https://example.com/extra-aztec.jpg"
+  ],
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "image_usage": "First 7 images used, last 3 ignored",
+    "graceful_handling": "Warning: Extra images will be ignored",
+    "mapping": "slide1→image1, ..., slide7→image7, images8-10→ignored"
+  }
+}

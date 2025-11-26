@@ -1,0 +1,26 @@
+{
+  "description": "Test attachments for both content extraction AND custom backgrounds",
+  "mode": "curious",
+  "template_key": "curious-template-1",
+  "slide_count": 7,
+  "user_input": "Analyze this research paper about renewable energy innovations.",
+  "category": "Science",
+  "image_source": "custom",
+  "attachments": [
+    "https://example.com/research-paper.pdf",
+    "https://example.com/solar-panel.jpg",
+    "https://example.com/wind-turbine.jpg",
+    "https://example.com/hydroelectric.jpg",
+    "https://example.com/geothermal.jpg",
+    "https://example.com/battery-storage.jpg",
+    "https://example.com/smart-grid.jpg",
+    "https://example.com/future-energy.jpg"
+  ],
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "content_extraction": "PDF processed for text content via OCR",
+    "background_images": "Images 2-8 used as slide backgrounds (7 images for 7 slides)",
+    "dual_purpose": "First attachment for content, rest for backgrounds",
+    "graceful_handling": "Perfect image count after content extraction"
+  }
+}

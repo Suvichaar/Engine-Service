@@ -1,0 +1,21 @@
+{
+  "description": "Test Curious mode with fewer images (4 images for 7 slides)",
+  "mode": "curious",
+  "template_key": "curious-template-1",
+  "slide_count": 7,
+  "user_input": "Climate change effects and environmental solutions.",
+  "category": "Nature",
+  "image_source": "custom",
+  "attachments": [
+    "https://example.com/climate-cover.jpg",
+    "https://example.com/global-warming.jpg",
+    "https://example.com/renewable-energy.jpg",
+    "https://example.com/green-solutions.jpg"
+  ],
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "image_usage": "First 4 images used, last image repeated for remaining slides",
+    "graceful_handling": "Warning: Last image will be repeated for remaining slides",
+    "mapping": "slide1→image1, slide2→image2, slide3→image3, slide4→image4, slide5-7→image4(repeated)"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "description": "Test Curious mode with Pexels stock images",
+  "mode": "curious",
+  "template_key": "curious-template-1",
+  "slide_count": 7,
+  "user_input": "Space exploration and the future of Mars colonization.",
+  "category": "Space",
+  "image_source": "pexels",
+  "prompt_keywords": [
+    "space",
+    "mars",
+    "rocket",
+    "astronaut",
+    "planet",
+    "exploration",
+    "galaxy"
+  ],
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "image_usage": "Pexels API searches for images using prompt_keywords",
+    "image_count": "7 different stock images from Pexels",
+    "search_strategy": "Cycles through keywords for variety"
+  }
+}

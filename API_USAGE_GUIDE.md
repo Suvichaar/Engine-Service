@@ -401,10 +401,10 @@ curl -X POST "http://localhost:8000/stories" \
 
 #### News Mode
 - `image_source: null` → Uses default images (polariscover.png, polarisslide.png)
+- ✅ `image_source: "ai"` → AI-generated images using DALL-E 3 (requires `prompt_keywords`)
 - `image_source: "custom"` → Uses custom uploaded images (requires `attachments`)
-- ❌ `image_source: "ai"` → **NOT supported** in News mode
 - ❌ `image_source: "pexels"` → **NOT supported** in News mode
-- ❌ `prompt_keywords` → **NOT used** in News mode
+- ✅ `prompt_keywords` → Used for AI image generation (optional for other sources)
 - `slide_count: 4` = 1 cover + 2 middle + 1 CTA
 - `category` is recommended for better content generation
 

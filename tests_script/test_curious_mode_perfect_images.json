@@ -1,0 +1,23 @@
+{
+  "description": "Test Curious mode with perfect image count (7 images for 7 slides)",
+  "mode": "curious",
+  "template_key": "curious-template-1",
+  "slide_count": 7,
+  "user_input": "How does quantum computing work? Explain the principles and applications.",
+  "category": "Science",
+  "image_source": "custom",
+  "attachments": [
+    "https://example.com/quantum-cover.jpg",
+    "https://example.com/quantum-principles.jpg",
+    "https://example.com/quantum-qubits.jpg",
+    "https://example.com/quantum-superposition.jpg",
+    "https://example.com/quantum-entanglement.jpg",
+    "https://example.com/quantum-applications.jpg",
+    "https://example.com/quantum-future.jpg"
+  ],
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "image_usage": "Each slide gets unique image: slide1→image1, slide2→image2, ..., slide7→image7",
+    "graceful_handling": "Perfect match, no warnings"
+  }
+}

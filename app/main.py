@@ -220,8 +220,9 @@ def get_orchestrator() -> StoryOrchestrator:
         repository = NoOpStoryRepository()
 
     # HTML Template Renderer (pass language_model for SEO metadata generation)
+    # Use app/ as base path - mode-specific logic will handle news_template vs curious_template
     html_renderer = HTMLTemplateRenderer(
-        template_base_path=Path("app/news_template"),
+        template_base_path=Path("app"),
         cdn_prefix_media=settings.aws.cdn_prefix_media,
         aws_bucket=settings.aws.bucket,
         language_model=language_model,  # Pass language model for LLM-based SEO generation

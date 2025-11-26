@@ -21,7 +21,7 @@ Quick reference guide for all input fields, their purposes, and valid combinatio
 |-------|------|-----------|--------------|-------------|
 | `user_input` | `string` | ✅ Supported | ✅ Supported | Unified input (URL/text/file) |
 | `attachments` | `array<string>` | ✅ Supported | ✅ Supported | Files/images for content + backgrounds |
-| `image_source` | `string \| null` | ✅ `null` or `"custom"` | ✅ `"ai"`, `"pexels"`, `"custom"` | Slide background source |
+| `image_source` | `string \| null` | ✅ `null`, `"ai"`, or `"custom"` | ✅ `"ai"`, `"pexels"`, `"custom"` | Slide background source |
 | `prompt_keywords` | `array<string>` | ❌ NOT USED | ✅ Optional/Required | Image generation keywords |
 | `category` | `string` | ✅ Recommended | ❌ Optional | Story category |
 | `voice_engine` | `string` | ✅ Optional | ✅ Optional | `"azure_basic"` or `"elevenlabs_pro"` |

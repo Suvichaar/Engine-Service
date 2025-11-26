@@ -1,0 +1,15 @@
+{
+  "description": "Test News mode with default images (no custom images)",
+  "mode": "news",
+  "template_key": "test-news-1",
+  "slide_count": 4,
+  "user_input": "https://indianexpress.com/article/technology/ai-breakthrough/",
+  "category": "Technology",
+  "image_source": null,
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "image_usage": "Default polaris images used for all slides",
+    "cover_image": "polariscover.png",
+    "slide_images": "polarisslide.png for all middle slides and CTA"
+  }
+}

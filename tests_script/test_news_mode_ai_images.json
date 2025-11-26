@@ -1,0 +1,25 @@
+{
+  "description": "Test News mode with AI-generated images",
+  "mode": "news",
+  "template_key": "test-news-1",
+  "slide_count": 4,
+  "user_input": "Breaking: Revolutionary AI breakthrough transforms healthcare diagnostics worldwide, enabling faster and more accurate disease detection.",
+  "category": "Technology",
+  "image_source": "ai",
+  "prompt_keywords": [
+    "news",
+    "healthcare",
+    "AI",
+    "technology",
+    "medical",
+    "breakthrough",
+    "diagnostics"
+  ],
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "image_usage": "AI generates unique images based on slide content + prompt keywords",
+    "image_count": "4 unique AI-generated images (cover + 2 middle + CTA)",
+    "prompt_strategy": "Combines slide text with prompt keywords for contextual images",
+    "fallback": "Uses prompt_keywords if slide text unavailable"
+  }
+}

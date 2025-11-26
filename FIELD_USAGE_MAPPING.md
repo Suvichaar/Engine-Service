@@ -170,7 +170,7 @@ document_intelligence.py
 |-------|-----------|--------------|-------------|
 | `null` | ✅ Supported | ❌ NOT Supported | Default images |
 | `"custom"` | ✅ Supported | ✅ Supported | User-provided images from `attachments` |
-| `"ai"` | ❌ NOT Supported | ✅ Supported | AI-generated images |
+| `"ai"` | ✅ Supported | ✅ Supported | AI-generated images |
 | `"pexels"` | ❌ NOT Supported | ✅ Supported | Pexels stock images |
 
 #### Usage in News Mode
@@ -807,16 +807,17 @@ s1image1, s2image1, etc. (background replacement in HTML)
 
 ## Common Mistakes to Avoid
 
-### ❌ Mistake 1: Using `image_source: "ai"` in News Mode
+### ✅ Using `image_source: "ai"` in News Mode (Now Supported)
 
 ```json
 {
   "mode": "news",
-  "image_source": "ai"  // ❌ NOT SUPPORTED
+  "image_source": "ai",
+  "prompt_keywords": ["news", "technology", "breaking"]  // ✅ SUPPORTED
 }
 ```
 
-**Fix**: Use `null` (default) or `"custom"`
+**Note**: AI image generation is now supported in News mode with prompt keywords
 
 ### ❌ Mistake 2: Expecting `user_input` images to become backgrounds
 

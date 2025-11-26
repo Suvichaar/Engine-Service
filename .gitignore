@@ -45,6 +45,7 @@ htmlcov/
 
 # Local configs / secrets
 config/settings.toml
+.streamlit/secrets.toml
 .env
 .env.*
 

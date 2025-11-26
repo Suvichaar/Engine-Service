@@ -1,0 +1,20 @@
+{
+  "description": "Test attachment processing for content extraction (OCR)",
+  "mode": "news",
+  "template_key": "test-news-1",
+  "slide_count": 4,
+  "user_input": "",
+  "category": "News",
+  "image_source": null,
+  "attachments": [
+    "https://example.com/news-document.pdf",
+    "https://example.com/article-screenshot.jpg"
+  ],
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "content_extraction": "PDF and image processed via OCR",
+    "text_extraction": "Extracted text used for story generation",
+    "image_usage": "Default polaris images used (not custom attachments)",
+    "dual_purpose": "Attachments used for content extraction only, not backgrounds"
+  }
+}

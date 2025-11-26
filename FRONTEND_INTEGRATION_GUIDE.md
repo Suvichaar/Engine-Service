@@ -83,9 +83,10 @@ When user selects a mode, it affects:
 | Image Source | Value | When to Show | Description | Requires |
 |--------------|-------|--------------|-------------|----------|
 | **Default** | `null` or `""` | Always available | Uses default polaris images (polariscover.png, polarisslide.png) | Nothing |
+| **AI Generated** | `"ai"` | Always available | AI generates images using DALL-E 3 based on content + keywords | `prompt_keywords` (recommended) |
 | **Custom** | `"custom"` | Always available | User uploads/selects custom image | `attachments` array |
 
-**Note**: News mode **only** supports Default and Custom images. AI and Pexels are **NOT** supported in News mode.
+**Note**: News mode supports Default, AI, and Custom images. Pexels is **NOT** supported in News mode.
 
 #### For **Curious Mode** (`mode: "curious"`)
 

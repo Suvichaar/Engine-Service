@@ -345,34 +345,40 @@ class UserUploadProvider:
     def generate(self, deck: SlideDeck, payload: IntakePayload) -> Sequence[ImageContent]:
         contents: list[ImageContent] = []
         
-        # For News mode with custom cover, use uploaded image for all slides based on slide_count
-        if payload.mode.value == "news" and payload.slide_count and payload.attachments:
-            # Use first attachment for cover and all middle slides
-            attachment = payload.attachments[0]
+        # Graceful handling for all modes (News and Curious)
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Validate attachment count for better handling
+        num_slides = len(deck.slides)
+        num_attachments = len(payload.attachments)
+        
+        if num_attachments != num_slides:
+            logger.warning(
+                f"Attachment count mismatch: {num_attachments} attachments "
+                f"for {num_slides} slides. Using graceful handling."
+            )
+        
+        # Process slides with graceful handling
+        for idx, slide in enumerate(deck.slides):
+            if slide.image_url:
+                continue
             
-            # Generate cover image (first slide)
-            if deck.slides:
-                cover_slide = deck.slides[0]
-                if not cover_slide.image_url:
-                    contents.append(self._to_content(cover_slide.placeholder_id, attachment))
+            # Determine which attachment to use
+            if idx < num_attachments:
+                # Use corresponding attachment
+                attachment = payload.attachments[idx]
+            elif num_attachments > 0:
+                # Use last attachment for remaining slides (repeat last image)
+                attachment = payload.attachments[-1]
+                logger.debug(f"Using last attachment for slide {idx} (repeating image)")
+            else:
+                # No attachments available, skip this slide
+                logger.warning(f"No attachment available for slide {idx}")
+                continue
             
-            # Generate middle slide images (slide_count - 2)
-            middle_slides_count = max(1, payload.slide_count - 2)
-            for idx in range(1, min(middle_slides_count + 1, len(deck.slides))):
-                slide = deck.slides[idx]
-                if slide.image_url:
-                    continue
-                # Use same attachment for all slides (or cycle through if multiple)
-                attachment_to_use = attachment
-                if len(payload.attachments) > idx:
-                    attachment_to_use = payload.attachments[idx]
-                contents.append(self._to_content(slide.placeholder_id, attachment_to_use))
-        else:
-            # Original behavior for other modes
-            for slide, attachment in zip(deck.slides, payload.attachments):
-                if slide.image_url:
-                    continue
-                contents.append(self._to_content(slide.placeholder_id, attachment))
+            contents.append(self._to_content(slide.placeholder_id, attachment))
+        
         return contents
 
     def _to_content(self, placeholder_id: str, attachment: str) -> ImageContent:

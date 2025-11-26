@@ -1,0 +1,24 @@
+{
+  "description": "Test Curious mode with AI-generated images",
+  "mode": "curious",
+  "template_key": "curious-template-1",
+  "slide_count": 7,
+  "user_input": "Explain photosynthesis process in plants step by step.",
+  "category": "Biology",
+  "image_source": "ai",
+  "prompt_keywords": [
+    "photosynthesis",
+    "plants",
+    "chlorophyll",
+    "sunlight",
+    "carbon dioxide",
+    "oxygen",
+    "biology"
+  ],
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "image_usage": "AI generates unique images based on alt texts from narrative",
+    "fallback": "Uses prompt_keywords if alt texts unavailable",
+    "image_count": "7 unique AI-generated images"
+  }
+}

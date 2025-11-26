@@ -243,10 +243,10 @@ class StoryOrchestrator:
                 # For News mode, upload HTML to S3 bucket "suvichaarstories" with slug-based filename
                 if payload.mode == Mode.NEWS and record.canurl1:
                     try:
-                        # Extract slug filename from canurl1: https://stories.suvichaar.org/slug_nano.html -> slug_nano.html
+                        # Extract slug filename from canurl1: https://suvichaar.org/stories/slug_nano.html -> slug_nano.html
                         canurl1_str = str(record.canurl1)
-                        if "stories.suvichaar.org/" in canurl1_str:
-                            slug_filename = canurl1_str.split("stories.suvichaar.org/")[-1]
+                        if "suvichaar.org/stories/" in canurl1_str:
+                            slug_filename = canurl1_str.split("suvichaar.org/stories/")[-1]
                             # slug_filename should be like "tragic-accident-near-navale-bridge-leaves-several-dead-and-injured-in-pune_KKd2kdX729_G.html"
                             
                             # Get AWS settings
@@ -299,7 +299,7 @@ class StoryOrchestrator:
         logger = logging.getLogger(__name__)
         
         # Extract slug from URL if full URL is provided
-        # e.g., "https://stories.suvichaar.org/slug_nano" -> "slug_nano"
+        # e.g., "https://suvichaar.org/stories/slug_nano" -> "slug_nano"
         # or "tragic-crash-near-navale-bridge-in-pune-leaves-several-dead-and-injured_PYDH_6ImHU_G"
         if "/" in slug:
             # Extract the last part after the last slash
@@ -309,8 +309,8 @@ class StoryOrchestrator:
                 slug = slug[:-5]
         
         # Try to find by canurl (without .html)
-        canurl = f"https://stories.suvichaar.org/{slug}"
-        canurl1 = f"https://stories.suvichaar.org/{slug}.html"
+        canurl = f"https://suvichaar.org/stories/{slug}"
+        canurl1 = f"https://suvichaar.org/stories/{slug}.html"
         
         try:
             # First try exact match with canurl
@@ -386,12 +386,12 @@ class StoryOrchestrator:
                 slug_nano = f"{slug}_{nano}"
                 
                 # canurl: without .html extension (for display)
-                # Format: https://stories.suvichaar.org/slug_nano
-                canurl = f"https://stories.suvichaar.org/{slug_nano}"
+                # Format: https://suvichaar.org/stories/slug_nano
+                canurl = f"https://suvichaar.org/stories/{slug_nano}"
                 
                 # canurl1: with .html extension (for S3 storage)
-                # Format: https://stories.suvichaar.org/slug_nano.html
-                canurl1 = f"https://stories.suvichaar.org/{slug_nano}.html"
+                # Format: https://suvichaar.org/stories/slug_nano.html
+                canurl1 = f"https://suvichaar.org/stories/{slug_nano}.html"
                 
                 return canurl, canurl1
             except Exception as e:

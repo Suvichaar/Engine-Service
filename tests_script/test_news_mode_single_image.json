@@ -1,0 +1,17 @@
+{
+  "description": "Test News mode with single custom image (traditional behavior)",
+  "mode": "news",
+  "template_key": "test-news-1",
+  "slide_count": 4,
+  "user_input": "Breaking news: Major technology breakthrough announced today. Scientists have developed a revolutionary new method for quantum computing that could change the industry forever.",
+  "category": "Technology",
+  "image_source": "custom",
+  "attachments": [
+    "https://example.com/tech-news-image.jpg"
+  ],
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "image_usage": "Same image used for all 4 slides (cover + 2 middle + CTA)",
+    "graceful_handling": "Single image repeated across all slides"
+  }
+}

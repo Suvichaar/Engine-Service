@@ -1,0 +1,23 @@
+{
+  "description": "Test News mode with extra images (6 images for 4 slides)",
+  "mode": "news",
+  "template_key": "test-news-2",
+  "slide_count": 4,
+  "user_input": "Technology sector sees major growth in AI investments this quarter.",
+  "category": "Business",
+  "image_source": "custom",
+  "attachments": [
+    "https://example.com/slide1-cover.jpg",
+    "https://example.com/slide2-middle1.jpg",
+    "https://example.com/slide3-middle2.jpg",
+    "https://example.com/slide4-cta.jpg",
+    "https://example.com/extra-image1.jpg",
+    "https://example.com/extra-image2.jpg"
+  ],
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "image_usage": "First 4 images used, last 2 ignored",
+    "graceful_handling": "Warning: Extra images will be ignored",
+    "mapping": "slide1→image1, slide2→image2, slide3→image3, slide4→image4, image5&6→ignored"
+  }
+}

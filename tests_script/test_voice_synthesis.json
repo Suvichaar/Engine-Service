@@ -1,0 +1,18 @@
+{
+  "description": "Test voice synthesis for different engines",
+  "mode": "curious",
+  "template_key": "curious-template-1",
+  "slide_count": 7,
+  "user_input": "Explain the water cycle and its importance in nature.",
+  "category": "Nature",
+  "image_source": "ai",
+  "prompt_keywords": ["water", "cycle", "evaporation", "precipitation", "nature"],
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "audio_generation": "Per-slide audio files generated",
+    "audio_count": "7 audio files (one per slide)",
+    "s3_storage": "Audio files uploaded to S3",
+    "placeholder_mapping": "Audio URLs mapped to slide placeholders",
+    "voice_engines": "azure_basic or elevenlabs_pro"
+  }
+}

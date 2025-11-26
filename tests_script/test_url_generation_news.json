@@ -1,0 +1,18 @@
+{
+  "description": "Test News mode URL generation (title-based slugs)",
+  "mode": "news",
+  "template_key": "test-news-1",
+  "slide_count": 4,
+  "user_input": "Breaking: Major Technology Breakthrough Changes Industry Forever!",
+  "category": "Technology",
+  "image_source": null,
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "url_generation": "Title-based slug with Nano ID",
+    "canurl_format": "https://suvichaar.org/stories/{slug_nano}",
+    "canurl1_format": "https://suvichaar.org/stories/{slug_nano}.html",
+    "slug_example": "breaking-major-technology-breakthrough-changes-industry-forever_AbC123XyZ_G",
+    "s3_storage": "HTML saved to suvichaarstories bucket",
+    "cdn_url": "https://stories.suvichaar.org/"
+  }
+}

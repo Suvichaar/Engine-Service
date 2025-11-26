@@ -1,14 +1,24 @@
 """
 Streamlit Frontend for Story Generation API
-Calls FastAPI backend for story generation
+Calls FastAPI backend for story generation with S3 upload support
 """
 
 import streamlit as st
 import requests
 import json
 import os
+import uuid
 from typing import Optional, List
 from pathlib import Path
+from datetime import datetime
+
+# Try to import boto3 for S3 uploads
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+    BOTO3_AVAILABLE = True
+except ImportError:
+    BOTO3_AVAILABLE = False
 
 # =========================
 # Configuration
@@ -19,10 +29,157 @@ try:
 except:
     FASTAPI_BASE_URL = os.getenv("FASTAPI_BASE_URL", "http://localhost:8000")
 
+# Get AWS credentials from secrets, environment, or settings.toml
+# Images go to suvichaarapp bucket, HTML goes to suvichaarstories bucket
+AWS_ACCESS_KEY = None
+AWS_SECRET_KEY = None
+AWS_REGION = "ap-south-1"
+AWS_BUCKET = "suvichaarapp"  # Images bucket
+AWS_HTML_BUCKET = "suvichaarstories"  # HTML bucket
+S3_PREFIX = "media/"
+
+# Try Streamlit secrets first
+try:
+    aws_secrets = st.secrets.get("aws", {})
+    if aws_secrets:
+        AWS_ACCESS_KEY = aws_secrets.get("AWS_ACCESS_KEY")
+        AWS_SECRET_KEY = aws_secrets.get("AWS_SECRET_KEY")
+        AWS_REGION = aws_secrets.get("AWS_REGION", "ap-south-1")
+        AWS_BUCKET = aws_secrets.get("AWS_BUCKET", "suvichaarapp")
+        AWS_HTML_BUCKET = aws_secrets.get("AWS_HTML_BUCKET", "suvichaarstories")
+        S3_PREFIX = aws_secrets.get("S3_PREFIX", "media/")
+except:
+    pass
+
+# Fallback to environment variables
+if not AWS_ACCESS_KEY or not AWS_SECRET_KEY:
+    AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY") or AWS_ACCESS_KEY
+    AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY") or AWS_SECRET_KEY
+    AWS_REGION = os.getenv("AWS_REGION", AWS_REGION)
+    AWS_BUCKET = os.getenv("AWS_BUCKET", AWS_BUCKET)
+    AWS_HTML_BUCKET = os.getenv("AWS_HTML_BUCKET", AWS_HTML_BUCKET)
+    S3_PREFIX = os.getenv("S3_PREFIX", S3_PREFIX)
+
+# Final fallback: Try reading from config/settings.toml
+if not AWS_ACCESS_KEY or not AWS_SECRET_KEY:
+    try:
+        import tomli  # Python 3.11+ has tomllib, but tomli works for older versions
+        settings_path = Path("config/settings.toml")
+        if settings_path.exists():
+            with open(settings_path, "rb") as f:
+                settings = tomli.load(f)
+                aws_config = settings.get("aws", {})
+                if aws_config:
+                    AWS_ACCESS_KEY = aws_config.get("AWS_ACCESS_KEY") or AWS_ACCESS_KEY
+                    AWS_SECRET_KEY = aws_config.get("AWS_SECRET_KEY") or AWS_SECRET_KEY
+                    AWS_REGION = aws_config.get("AWS_REGION", AWS_REGION)
+                    AWS_BUCKET = aws_config.get("AWS_BUCKET", AWS_BUCKET)
+                    S3_PREFIX = aws_config.get("S3_PREFIX", S3_PREFIX).rstrip("/") + "/"
+    except ImportError:
+        # Try tomllib (Python 3.11+)
+        try:
+            import tomllib
+            settings_path = Path("config/settings.toml")
+            if settings_path.exists():
+                with open(settings_path, "rb") as f:
+                    settings = tomllib.load(f)
+                    aws_config = settings.get("aws", {})
+                    if aws_config:
+                        AWS_ACCESS_KEY = aws_config.get("AWS_ACCESS_KEY") or AWS_ACCESS_KEY
+                        AWS_SECRET_KEY = aws_config.get("AWS_SECRET_KEY") or AWS_SECRET_KEY
+                        AWS_REGION = aws_config.get("AWS_REGION", AWS_REGION)
+                        AWS_BUCKET = aws_config.get("AWS_BUCKET", AWS_BUCKET)
+                        S3_PREFIX = aws_config.get("S3_PREFIX", S3_PREFIX).rstrip("/") + "/"
+        except ImportError:
+            pass
+    except Exception:
+        pass
+
 API_ENDPOINT = f"{FASTAPI_BASE_URL}/stories"
 
 # =========================
-# Helper Functions
+# S3 Upload Helper Functions
+# =========================
+def get_s3_client():
+    """Get S3 client if credentials are available."""
+    if not BOTO3_AVAILABLE:
+        return None
+    if not AWS_ACCESS_KEY or not AWS_SECRET_KEY:
+        return None
+    try:
+        return boto3.client(
+            "s3",
+            aws_access_key_id=AWS_ACCESS_KEY,
+            aws_secret_access_key=AWS_SECRET_KEY,
+            region_name=AWS_REGION
+        )
+    except Exception as e:
+        st.error(f"S3 client error: {e}")
+        return None
+
+def upload_file_to_s3(file, file_type: str = "attachment") -> Optional[str]:
+    """
+    Upload file to S3 and return S3 URL.
+    
+    Args:
+        file: Streamlit uploaded file object
+        file_type: "attachment" for content extraction, "background" for slide backgrounds
+    
+    Returns:
+        S3 URL or None if upload fails
+    """
+    if not BOTO3_AVAILABLE:
+        return None
+    
+    s3_client = get_s3_client()
+    if not s3_client or not AWS_BUCKET:
+        return None
+    
+    try:
+        # Generate unique filename
+        file_ext = Path(file.name).suffix
+        unique_id = str(uuid.uuid4())
+        timestamp = datetime.now().strftime("%Y%m%d")
+        
+        # Determine S3 key based on file type
+        if file_type == "background":
+            # Background images go to media/images/backgrounds/
+            s3_key = f"{S3_PREFIX.rstrip('/')}/images/backgrounds/{timestamp}/{unique_id}{file_ext}"
+        else:
+            # Attachments go to media/attachments/
+            s3_key = f"{S3_PREFIX.rstrip('/')}/attachments/{timestamp}/{unique_id}{file_ext}"
+        
+        # Determine content type
+        content_type_map = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+            ".pdf": "application/pdf",
+            ".doc": "application/msword",
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        }
+        content_type = content_type_map.get(file_ext.lower(), "application/octet-stream")
+        
+        # Upload to S3
+        file.seek(0)  # Reset file pointer
+        s3_client.put_object(
+            Bucket=AWS_BUCKET,
+            Key=s3_key,
+            Body=file.read(),
+            ContentType=content_type
+        )
+        
+        # Return S3 URL
+        s3_url = f"s3://{AWS_BUCKET}/{s3_key}"
+        return s3_url
+        
+    except Exception as e:
+        st.error(f"Failed to upload {file.name} to S3: {e}")
+        return None
+
+# =========================
+# API Helper Functions
 # =========================
 def create_story(payload: dict, base_url: str = None) -> dict:
     """Call FastAPI to create a story."""
@@ -89,6 +246,20 @@ with st.sidebar:
         if api_url != FASTAPI_BASE_URL:
             st.info(f"Using: {api_url}")
     
+    # S3 Configuration Status
+    st.markdown("---")
+    st.markdown("### ☁️ S3 Configuration")
+    if BOTO3_AVAILABLE and AWS_ACCESS_KEY and AWS_BUCKET:
+        st.success("✅ S3 Upload Available")
+        st.caption(f"Bucket: {AWS_BUCKET}")
+        st.caption(f"Region: {AWS_REGION}")
+    else:
+        st.warning("⚠️ S3 Upload Not Available")
+        if not BOTO3_AVAILABLE:
+            st.caption("boto3 not installed")
+        if not AWS_ACCESS_KEY:
+            st.caption("AWS credentials not configured")
+    
     st.markdown("---")
     st.markdown("### 📚 API Endpoints")
     st.code(f"POST {api_url}/stories")
@@ -96,30 +267,50 @@ with st.sidebar:
     st.code(f"GET {api_url}/stories/{{id}}/html")
 
 # Main Form
+# Mode Selection (outside form to allow st.rerun())
+st.header("📝 Create New Story")
+
+mode = st.selectbox(
+    "Mode",
+    options=["news", "curious"],
+    help="Select story mode: News for articles, Curious for educational content",
+    key="mode_select"
+)
+
+# Track mode change and rerun to reset template dropdown
+if "last_mode" not in st.session_state:
+    st.session_state.last_mode = mode
+
+# If mode changed, clear template state and rerun
+if st.session_state.last_mode != mode:
+    # Clear template selections
+    if "template_select_news" in st.session_state:
+        del st.session_state["template_select_news"]
+    if "template_select_curious" in st.session_state:
+        del st.session_state["template_select_curious"]
+    st.session_state.last_mode = mode
+    st.rerun()  # Now safe to call outside form
+
 with st.form("story_form", clear_on_submit=False):
-    st.header("📝 Create New Story")
     
-    # Mode Selection
-    mode = st.selectbox(
-        "Mode",
-        options=["news", "curious"],
-        help="Select story mode: News for articles, Curious for educational content"
-    )
-    
-    # Template Selection
+    # Set template options based on mode
     if mode == "news":
+        template_options = ["test-news-1", "test-news-2"]
         template_key = st.selectbox(
             "Template",
-            options=["test-news-1", "test-news-2"],
-            help="Select template for News mode"
+            options=template_options,
+            help="Select template for News mode",
+            key="template_select_news"
         )
         default_slide_count = 4
         slide_count_range = (4, 10)
     else:  # curious
+        template_options = ["curious-template-1", "template-v19"]
         template_key = st.selectbox(
             "Template",
-            options=["curious-template-1"],
-            help="Select template for Curious mode"
+            options=template_options,
+            help="Select template for Curious mode",
+            key="template_select_curious"
         )
         default_slide_count = 7
         slide_count_range = (7, 15)
@@ -133,61 +324,162 @@ with st.form("story_form", clear_on_submit=False):
         help=f"Number of slides ({slide_count_range[0]}-{slide_count_range[1]})"
     )
     
-    # Category
-    category = st.text_input(
+    # Category - Dropdown for both modes
+    st.markdown("### 📂 Category")
+    if mode == "news":
+        category_options = ["News", "Technology", "Sports", "Politics", "Business", "Entertainment", "Science", "Health", "World", "Local"]
+    else:  # curious
+        category_options = ["Education", "Science", "Technology", "History", "Nature", "Space", "Mathematics", "Physics", "Biology", "Chemistry", "General Knowledge"]
+    
+    category = st.selectbox(
         "Category",
-        value="News" if mode == "news" else "Education",
-        help="Story category"
+        options=category_options,
+        index=0,
+        help="Select story category"
     )
     
-    # User Input (Unified)
+    # User Input (Unified) - Different labels for different modes
     st.markdown("### 📄 Content Input")
-    user_input = st.text_area(
-        "Content",
-        height=150,
-        help="Enter text, URL(s), or content. URLs will be automatically extracted."
-    )
+    if mode == "news":
+        user_input = st.text_area(
+            "Article URL or Content",
+            height=150,
+            placeholder="Enter article URL (e.g., https://example.com/article) OR paste article content here...",
+            help="Enter article URL to extract content, or paste article text directly"
+        )
+    else:  # curious
+        user_input = st.text_area(
+            "Topic or Keywords",
+            height=150,
+            placeholder="Enter topic, keywords, or question (e.g., 'How does quantum computing work?')",
+            help="Enter topic, keywords, or question for educational content"
+        )
     
-    # Image Source (conditional)
-    st.markdown("### 🖼️ Image Settings")
+    # Attachments Section (for both modes - for content extraction)
+    st.markdown("### 📎 Attachments (Optional - for Content Extraction)")
+    if mode == "news":
+        st.caption("📄 Upload documents (PDF, DOCX) or article photos for content extraction via OCR")
+        uploaded_attachments = st.file_uploader(
+            "Upload Documents or Images",
+            type=["pdf", "doc", "docx", "jpg", "jpeg", "png", "webp"],
+            accept_multiple_files=True,
+            help="Upload documents or images for content extraction. These will be processed via OCR to extract text content."
+        )
+    else:  # curious
+        st.caption("📄 Upload images or documents to use as content source")
+        uploaded_attachments = st.file_uploader(
+            "Upload Images or Documents",
+            type=["pdf", "doc", "docx", "jpg", "jpeg", "png", "webp"],
+            accept_multiple_files=True,
+            help="Upload images or documents for content extraction. These will be processed via OCR to extract text content."
+        )
+    
+    # Image Source (conditional) - For slide backgrounds only
+    st.markdown("### 🖼️ Background Image Settings")
+    st.caption("These images are used as slide backgrounds (not for content extraction)")
+    
     if mode == "news":
         image_source = st.radio(
             "Image Source",
-            options=["default", "custom"],
-            format_func=lambda x: "Default Images" if x == "default" else "Custom Image",
-            help="News mode: Use default images or upload custom"
+            options=["default", "ai", "custom"],
+            format_func=lambda x: {
+                "default": "Default Images",
+                "ai": "AI Generated", 
+                "custom": "Custom Images"
+            }[x],
+            help="News mode: Default polaris images, AI generated images, or custom uploads"
         )
-        image_source = None if image_source == "default" else "custom"
+        image_source = None if image_source == "default" else image_source
+        
+        # Prompt Keywords for AI (News mode)
         prompt_keywords = None
+        if image_source == "ai":
+            prompt_keywords_input = st.text_input(
+                "Prompt Keywords (comma-separated)",
+                placeholder="news, breaking, journalism, media, technology",
+                help="Keywords for AI image generation in News mode"
+            )
+            prompt_keywords = [k.strip() for k in prompt_keywords_input.split(",") if k.strip()] if prompt_keywords_input else []
+        
+        # Custom Images Upload for News (multiple images based on slide_count)
+        uploaded_background_images = []
+        if image_source == "custom":
+            st.caption(f"📸 Upload up to {slide_count} images (one for each slide background)")
+            uploaded_background_images = st.file_uploader(
+                "Upload Background Images",
+                type=["jpg", "jpeg", "png", "webp"],
+                accept_multiple_files=True,
+                help=f"Upload up to {slide_count} custom images for slide backgrounds (will be resized to 720x1280 portrait)"
+            )
+            if uploaded_background_images:
+                if len(uploaded_background_images) != slide_count:
+                    if len(uploaded_background_images) > slide_count:
+                        st.warning(f"⚠️ You uploaded {len(uploaded_background_images)} images for {slide_count} slides. Extra images will be ignored.")
+                    else:
+                        st.warning(f"⚠️ You uploaded {len(uploaded_background_images)} images for {slide_count} slides. The last image will be repeated for remaining slides.")
+                else:
+                    st.success(f"✅ {len(uploaded_background_images)} images uploaded")
+                
+                # Show preview (all uploaded images)
+                cols = st.columns(min(3, len(uploaded_background_images)))
+                for idx, img in enumerate(uploaded_background_images):
+                    with cols[idx % 3]:
+                        caption = f"Slide {idx+1}"
+                        if idx >= slide_count:
+                            caption += " (will be ignored)"
+                        st.image(img, caption=caption, use_container_width=True)
+                st.info("ℹ️ Images will be uploaded to S3 in portrait size (720x1280) and used as slide backgrounds")
     else:  # curious
         image_source = st.radio(
             "Image Source",
             options=["ai", "pexels", "custom"],
-            help="Curious mode: AI generated, Pexels, or custom image"
+            help="Curious mode: AI generated, Pexels stock images, or custom uploaded images"
         )
-        # Prompt Keywords for Curious mode
-        prompt_keywords_input = st.text_input(
-            "Prompt Keywords (comma-separated)",
-            help="Keywords for AI image generation (Curious mode only)"
-        )
-        prompt_keywords = [k.strip() for k in prompt_keywords_input.split(",") if k.strip()] if prompt_keywords_input else []
-    
-    # Custom Image Upload (if custom selected)
-    uploaded_file = None
-    if image_source == "custom":
-        uploaded_file = st.file_uploader(
-            "Upload Image",
-            type=["jpg", "jpeg", "png", "webp"],
-            help="Upload custom image for slide backgrounds"
-        )
-        if uploaded_file:
-            st.info("⚠️ Note: Image needs to be uploaded to S3 first. Use attachment URL in production.")
+        
+        # Prompt Keywords for AI/Pexels
+        prompt_keywords = None
+        if image_source in ["ai", "pexels"]:
+            prompt_keywords_input = st.text_input(
+                "Prompt Keywords (comma-separated)",
+                help="Keywords for AI image generation or Pexels search (Curious mode only)"
+            )
+            prompt_keywords = [k.strip() for k in prompt_keywords_input.split(",") if k.strip()] if prompt_keywords_input else []
+        
+        # Custom Images Upload for Curious (multiple images based on slide_count)
+        uploaded_background_images = []
+        if image_source == "custom":
+            st.caption(f"📸 Upload exactly {slide_count} images (one for each slide background)")
+            uploaded_background_images = st.file_uploader(
+                "Upload Background Images",
+                type=["jpg", "jpeg", "png", "webp"],
+                accept_multiple_files=True,
+                help=f"Upload {slide_count} custom images for slide backgrounds (will be resized to 720x1280 portrait)"
+            )
+            if uploaded_background_images:
+                if len(uploaded_background_images) != slide_count:
+                    if len(uploaded_background_images) > slide_count:
+                        st.warning(f"⚠️ You uploaded {len(uploaded_background_images)} images for {slide_count} slides. Extra images will be ignored.")
+                    else:
+                        st.warning(f"⚠️ You uploaded {len(uploaded_background_images)} images for {slide_count} slides. The last image will be repeated for remaining slides.")
+                else:
+                    st.success(f"✅ {len(uploaded_background_images)} images uploaded")
+                
+                # Show preview (all uploaded images)
+                cols = st.columns(min(3, len(uploaded_background_images)))
+                for idx, img in enumerate(uploaded_background_images):
+                    with cols[idx % 3]:
+                        caption = f"Slide {idx+1}"
+                        if idx >= slide_count:
+                            caption += " (will be ignored)"
+                        st.image(img, caption=caption, use_container_width=True)
+                st.info("ℹ️ Images will be uploaded to S3 in portrait size (720x1280) and used as slide backgrounds")
     
     # Voice Engine
+    st.markdown("### 🎤 Voice Settings")
     voice_engine = st.selectbox(
         "Voice Engine",
         options=["azure_basic", "elevenlabs_pro"],
-        help="Text-to-speech engine"
+        help="Text-to-speech engine for narration"
     )
     
     # Submit Button
@@ -195,34 +487,106 @@ with st.form("story_form", clear_on_submit=False):
 
 # Process Form Submission
 if submitted:
-    if not user_input:
-        st.error("❌ Please enter content (text or URL)")
+    if not user_input and not uploaded_attachments:
+        st.error("❌ Please enter content (text/URL) or upload attachments")
     else:
         # Build payload
         payload = {
             "mode": mode,
             "template_key": template_key,
             "slide_count": slide_count,
-            "user_input": user_input,
+            "user_input": user_input if user_input else None,
             "category": category,
             "image_source": image_source,
             "voice_engine": voice_engine,
         }
         
-        # Add prompt_keywords for Curious mode
-        if mode == "curious" and prompt_keywords:
+        # Add prompt_keywords for AI/Pexels (both News and Curious modes)
+        if image_source in ["ai", "pexels"] and prompt_keywords:
             payload["prompt_keywords"] = prompt_keywords
         
-        # Add attachment if custom image uploaded
-        if image_source == "custom" and uploaded_file:
-            # Note: In production, upload to S3 first and use URL
-            st.warning("⚠️ File upload: In production, upload image to S3 first and provide URL in 'attachments' field")
+        # Handle attachments (for content extraction)
+        attachments_list = []
+        if uploaded_attachments:
+            with st.spinner(f"📤 Uploading {len(uploaded_attachments)} attachment(s) to S3..."):
+                upload_progress = st.progress(0)
+                for idx, file in enumerate(uploaded_attachments):
+                    s3_url = upload_file_to_s3(file, file_type="attachment")
+                    if s3_url:
+                        attachments_list.append(s3_url)
+                        st.success(f"✅ Uploaded: {file.name}")
+                    else:
+                        st.error(f"❌ Failed to upload: {file.name}")
+                    upload_progress.progress((idx + 1) / len(uploaded_attachments))
+                
+                if attachments_list:
+                    payload["attachments"] = attachments_list
+                    st.info(f"📎 {len(attachments_list)} attachment(s) ready")
+        
+        # Handle background images (for slide backgrounds)
+        background_attachments = []
+        
+        if mode == "news" and image_source == "custom" and uploaded_background_images:
+            # Graceful handling - allow mismatched counts but show appropriate messages
+            if len(uploaded_background_images) != slide_count:
+                if len(uploaded_background_images) > slide_count:
+                    st.info(f"ℹ️ Uploading first {slide_count} images (extra images will be ignored)")
+                else:
+                    st.info(f"ℹ️ Uploading {len(uploaded_background_images)} images (last image will be repeated for remaining slides)")
+            
+            with st.spinner(f"📤 Uploading {len(uploaded_background_images)} background images to S3..."):
+                upload_progress = st.progress(0)
+                for idx, file in enumerate(uploaded_background_images):
+                    s3_url = upload_file_to_s3(file, file_type="background")
+                    if s3_url:
+                        background_attachments.append(s3_url)
+                        slide_info = f"Slide {idx+1}"
+                        if idx >= slide_count:
+                            slide_info += " (will be ignored)"
+                        st.success(f"✅ Uploaded: {file.name} ({slide_info})")
+                    else:
+                        st.error(f"❌ Failed to upload: {file.name}")
+                        submitted = False
+                        break
+                    upload_progress.progress((idx + 1) / len(uploaded_background_images))
+                
+                if background_attachments:
+                    payload["attachments"] = (payload.get("attachments", []) + background_attachments)
+                    st.info(f"🖼️ {len(background_attachments)} background image(s) ready")
+        
+        if mode == "curious" and image_source == "custom" and uploaded_background_images:
+            # Graceful handling - allow mismatched counts but show appropriate messages
+            if len(uploaded_background_images) != slide_count:
+                if len(uploaded_background_images) > slide_count:
+                    st.info(f"ℹ️ Uploading first {slide_count} images (extra images will be ignored)")
+                else:
+                    st.info(f"ℹ️ Uploading {len(uploaded_background_images)} images (last image will be repeated for remaining slides)")
+            
+            with st.spinner(f"📤 Uploading {len(uploaded_background_images)} background images to S3..."):
+                upload_progress = st.progress(0)
+                for idx, file in enumerate(uploaded_background_images):
+                    s3_url = upload_file_to_s3(file, file_type="background")
+                    if s3_url:
+                        background_attachments.append(s3_url)
+                        slide_info = f"Slide {idx+1}"
+                        if idx >= slide_count:
+                            slide_info += " (will be ignored)"
+                        st.success(f"✅ Uploaded: {file.name} ({slide_info})")
+                    else:
+                        st.error(f"❌ Failed to upload: {file.name}")
+                        submitted = False
+                        break
+                    upload_progress.progress((idx + 1) / len(uploaded_background_images))
+                
+                if background_attachments:
+                    payload["attachments"] = (payload.get("attachments", []) + background_attachments)
+                    st.info(f"🖼️ {len(background_attachments)} background image(s) ready")
         
         # Show payload (for debugging)
         with st.expander("📋 Request Payload", expanded=False):
             st.json(payload)
         
-        # Call API
+        # Call API (for all cases, not just curious custom images)
         with st.spinner("🔄 Generating story... This may take a few minutes."):
             try:
                 # Use API URL from session state (sidebar input)
@@ -348,4 +712,3 @@ st.markdown("""
 - **GET /stories/{id}/html** - Get rendered HTML
 - **GET /templates** - List available templates
 """)
-

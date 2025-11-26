@@ -1,0 +1,20 @@
+{
+  "description": "Test SEO metadata generation in HTML output",
+  "mode": "news",
+  "template_key": "test-news-1",
+  "slide_count": 4,
+  "user_input": "Revolutionary AI breakthrough transforms healthcare diagnostics worldwide.",
+  "category": "Technology",
+  "image_source": null,
+  "voice_engine": "azure_basic",
+  "expected_behavior": {
+    "page_title": "Revolutionary AI breakthrough transforms healthcare diagnostics worldwide | Suvichaar",
+    "meta_description": "LLM-generated description (max 160 chars)",
+    "meta_keywords": "LLM-generated 8-12 keywords",
+    "og_tags": "og:title, og:description, og:type=Article",
+    "twitter_cards": "twitter:title, twitter:description",
+    "lang_attribute": "en-US or hi-IN based on content",
+    "content_type": "News for news mode, Article for curious mode",
+    "timestamps": "ISO 8601 format with Z suffix"
+  }
+}
