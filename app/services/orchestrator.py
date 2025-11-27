@@ -192,9 +192,9 @@ class StoryOrchestrator:
         story_id = self.id_factory()
         created_at = datetime.utcnow()
         
-        # Get story title for URL generation (News mode uses title-based URLs)
+        # Get story title for URL generation (News and Curious modes use title-based URLs)
         story_title = None
-        if payload.mode == Mode.NEWS and narrative.slide_deck.slides:
+        if payload.mode in [Mode.NEWS, Mode.CURIOUS] and narrative.slide_deck.slides:
             story_title = narrative.slide_deck.slides[0].text or None
         
         canurl, canurl1 = self._build_canurls(story_id, story_title=story_title, mode=payload.mode)
@@ -240,8 +240,8 @@ class StoryOrchestrator:
                 logger = logging.getLogger(__name__)
                 logger.info("HTML saved to: %s", html_file_path)
                 
-                # For News mode, upload HTML to S3 bucket "suvichaarstories" with slug-based filename
-                if payload.mode == Mode.NEWS and record.canurl1:
+                # For News and Curious modes, upload HTML to S3 bucket "suvichaarstories" with slug-based filename
+                if payload.mode in [Mode.NEWS, Mode.CURIOUS] and record.canurl1:
                     try:
                         # Extract slug filename from canurl1: https://suvichaar.org/stories/slug_nano.html -> slug_nano.html
                         canurl1_str = str(record.canurl1)
@@ -355,7 +355,7 @@ class StoryOrchestrator:
         """
         Build canonical URLs for the story.
         
-        For News mode: Uses title-based slug + nano ID format
+        For News and Curious modes: Uses title-based slug + nano ID format
         For other modes: Uses story_id format
         
         Args:
@@ -365,14 +365,14 @@ class StoryOrchestrator:
         
         Returns:
             Tuple of (canurl, canurl1)
-            - canurl: Primary URL (without .html for News mode)
-            - canurl1: Secondary URL (with .html for News mode, saved to S3)
+            - canurl: Primary URL (without .html for News/Curious modes)
+            - canurl1: Secondary URL (with .html for News/Curious modes, saved to S3)
         """
         if not self.story_base_url:
             return None, None
         
-        # For News mode, use title-based slug + nano ID format
-        if mode == Mode.NEWS and story_title:
+        # For News and Curious modes, use title-based slug + nano ID format
+        if mode in [Mode.NEWS, Mode.CURIOUS] and story_title:
             try:
                 # Generate slug from title
                 slug = self._slugify_title(story_title)
@@ -400,7 +400,7 @@ class StoryOrchestrator:
                 logger.warning("Failed to generate title-based URLs, falling back to UUID: %s", e)
                 # Fallback to UUID-based URLs
         
-        # For Curious mode or fallback: use story_id format
+        # Fallback for other modes: use story_id format
         base = self.story_base_url.rstrip("/")
         primary = f"{base}/{story_id}"
         secondary = f"{primary}?variant=alt"

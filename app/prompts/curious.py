@@ -30,6 +30,7 @@ CURIOUS_TEMPLATE = PromptTemplate(
         "Wildlife",
         "Spiritual",
         "Food",
+        "Education",
     ],
     description="Explainable storytelling with emphasis on context and curiosity.",
 )

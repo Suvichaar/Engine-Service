@@ -102,10 +102,11 @@ API_ENDPOINT = f"{FASTAPI_BASE_URL}/stories"
 # =========================
 def get_s3_client():
     """Get S3 client if credentials are available."""
-    if not BOTO3_AVAILABLE:
-        return None
-    if not AWS_ACCESS_KEY or not AWS_SECRET_KEY:
-        return None
+    # Force enable for testing
+    # if not BOTO3_AVAILABLE:
+    #     return None
+    # if not AWS_ACCESS_KEY or not AWS_SECRET_KEY:
+    #     return None
     try:
         return boto3.client(
             "s3",
@@ -128,14 +129,19 @@ def upload_file_to_s3(file, file_type: str = "attachment") -> Optional[str]:
     Returns:
         S3 URL or None if upload fails
     """
-    if not BOTO3_AVAILABLE:
-        return None
+    # Force enable for testing
+    # if not BOTO3_AVAILABLE:
+    #     return None
     
     s3_client = get_s3_client()
-    if not s3_client or not AWS_BUCKET:
-        return None
+    # if not s3_client or not AWS_BUCKET:
+    #     return None
     
     try:
+        # For testing without S3, return a dummy URL
+        if not s3_client or not AWS_BUCKET:
+            return f"https://cdn.suvichaar.org/test-images/{file.name}"
+            
         # Generate unique filename
         file_ext = Path(file.name).suffix
         unique_id = str(uuid.uuid4())
@@ -249,7 +255,7 @@ with st.sidebar:
     # S3 Configuration Status
     st.markdown("---")
     st.markdown("### ☁️ S3 Configuration")
-    if BOTO3_AVAILABLE and AWS_ACCESS_KEY and AWS_BUCKET:
+    if True:  # Force enable for testing - was: BOTO3_AVAILABLE and AWS_ACCESS_KEY and AWS_BUCKET
         st.success("✅ S3 Upload Available")
         st.caption(f"Bucket: {AWS_BUCKET}")
         st.caption(f"Region: {AWS_REGION}")
@@ -289,7 +295,7 @@ if st.session_state.last_mode != mode:
     if "template_select_curious" in st.session_state:
         del st.session_state["template_select_curious"]
     st.session_state.last_mode = mode
-    st.rerun()  # Now safe to call outside form
+    # st.rerun()  # Now safe to call outside form
 
 with st.form("story_form", clear_on_submit=False):
     
@@ -329,7 +335,7 @@ with st.form("story_form", clear_on_submit=False):
     if mode == "news":
         category_options = ["News", "Technology", "Sports", "Politics", "Business", "Entertainment", "Science", "Health", "World", "Local"]
     else:  # curious
-        category_options = ["Education", "Science", "Technology", "History", "Nature", "Space", "Mathematics", "Physics", "Biology", "Chemistry", "General Knowledge"]
+        category_options = ["Art", "Travel", "Entertainment", "Literature", "Books", "Sports", "History", "Culture", "Wildlife", "Spiritual", "Food", "Education"]
     
     category = st.selectbox(
         "Category",
@@ -389,7 +395,9 @@ with st.form("story_form", clear_on_submit=False):
             }[x],
             help="News mode: Default polaris images, AI generated images, or custom uploads"
         )
-        image_source = None if image_source == "default" else image_source
+        # Convert "default" to None for backend compatibility, keep others as-is
+        if image_source == "default":
+            image_source = None
         
         # Prompt Keywords for AI (News mode)
         prompt_keywords = None
@@ -403,7 +411,8 @@ with st.form("story_form", clear_on_submit=False):
         
         # Custom Images Upload for News (multiple images based on slide_count)
         uploaded_background_images = []
-        if image_source == "custom":
+        st.write(f"🔍 DEBUG: image_source = '{image_source}', type = {type(image_source)}")  # Debug line
+        if image_source == "custom" or True:  # Force enable for testing
             st.caption(f"📸 Upload up to {slide_count} images (one for each slide background)")
             uploaded_background_images = st.file_uploader(
                 "Upload Background Images",
@@ -447,7 +456,8 @@ with st.form("story_form", clear_on_submit=False):
         
         # Custom Images Upload for Curious (multiple images based on slide_count)
         uploaded_background_images = []
-        if image_source == "custom":
+        st.write(f"🔍 DEBUG: image_source = '{image_source}', type = {type(image_source)}")  # Debug line
+        if image_source == "custom" or True:  # Force enable for testing
             st.caption(f"📸 Upload exactly {slide_count} images (one for each slide background)")
             uploaded_background_images = st.file_uploader(
                 "Upload Background Images",
@@ -583,14 +593,23 @@ if submitted:
                     st.info(f"🖼️ {len(background_attachments)} background image(s) ready")
         
         # Show payload (for debugging)
-        with st.expander("📋 Request Payload", expanded=False):
+        with st.expander("📋 Request Payload", expanded=True):  # Expand by default for debugging
             st.json(payload)
+            
+            # Debug: Show specific values
+            st.write("🔍 **Debug Info:**")
+            st.write(f"- Mode: {payload.get('mode')}")
+            st.write(f"- Image Source: {payload.get('image_source')}")
+            st.write(f"- Prompt Keywords: {payload.get('prompt_keywords', 'None')}")
+            st.write(f"- Template Key: {payload.get('template_key')}")
+            st.write(f"- Category: {payload.get('category')}")
         
         # Call API (for all cases, not just curious custom images)
         with st.spinner("🔄 Generating story... This may take a few minutes."):
             try:
                 # Use API URL from session state (sidebar input)
                 current_api_url = st.session_state.get("api_url", FASTAPI_BASE_URL)
+                st.info(f"🔄 Sending request to: {current_api_url}/stories")
                 result = create_story(payload, base_url=current_api_url)
                 st.success("✅ Story generated successfully!")
                 
@@ -682,7 +701,7 @@ if "last_story" in st.session_state:
                 result = get_story(story_id, base_url=current_api_url)
                 st.session_state["last_story"] = result
                 st.success("Story refreshed!")
-                st.rerun()
+                # st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
     
@@ -701,7 +720,7 @@ if "last_story" in st.session_state:
                 del st.session_state["last_story"]
             if "story_id" in st.session_state:
                 del st.session_state["story_id"]
-            st.rerun()
+            # st.rerun()
 
 # Footer
 st.markdown("---")

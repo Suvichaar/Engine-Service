@@ -94,7 +94,10 @@ class AIImageProvider:
         self._api_key = api_key
 
     def supports(self, payload: IntakePayload) -> bool:
-        return payload.image_source == "ai"
+        result = payload.image_source == "ai"
+        logger = logging.getLogger(__name__)
+        logger.info(f"🔍 AIImageProvider.supports() - image_source: {payload.image_source}, result: {result}")
+        return result
 
     def generate(self, deck: SlideDeck, payload: IntakePayload) -> Sequence[ImageContent]:
         contents: list[ImageContent] = []

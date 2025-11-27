@@ -145,9 +145,12 @@ def get_orchestrator() -> StoryOrchestrator:
     if settings.ai_image and not (
         is_placeholder_value(settings.ai_image.endpoint) or is_placeholder_value(settings.ai_image.api_key)
     ):
+        logging.info(f"✅ Initializing AIImageProvider with endpoint: {settings.ai_image.endpoint[:50]}...")
         image_providers.append(
             AIImageProvider(endpoint=settings.ai_image.endpoint, api_key=settings.ai_image.api_key)
         )
+    else:
+        logging.warning("❌ AIImageProvider not initialized - missing ai_image configuration")
     if settings.pexels and not is_placeholder_value(settings.pexels.api_key):
         image_providers.append(PexelsImageProvider(api_key=settings.pexels.api_key))
     image_providers.append(UserUploadProvider())
@@ -164,7 +167,7 @@ def get_orchestrator() -> StoryOrchestrator:
     image_storage = S3ImageStorageService(
         bucket=settings.aws.bucket,
         prefix=settings.aws.s3_prefix,
-        cdn_base=settings.aws.cdn_base,
+        cdn_base=settings.aws.cdn_prefix_media,
         resize_variants=resize_map or None,
         aws_access_key=settings.aws.access_key,
         aws_secret_key=settings.aws.secret_key,

@@ -230,7 +230,7 @@ These fields work the same way across both modes:
 - `"News"`, `"Technology"`, `"Sports"`, `"Politics"`, `"Business"`, `"Entertainment"`, `"Science"`, `"Health"`, `"World"`, `"Local"`
 
 #### Curious Mode Categories
-- `"Education"`, `"Science"`, `"Technology"`, `"History"`, `"Nature"`, `"Space"`, `"Mathematics"`, `"Physics"`, `"Biology"`, `"Chemistry"`, `"General Knowledge"`
+- `"Art"`, `"Travel"`, `"Entertainment"`, `"Literature"`, `"Books"`, `"Sports"`, `"History"`, `"Culture"`, `"Wildlife"`, `"Spiritual"`, `"Food"`, `"Education"`
 
 ---
 

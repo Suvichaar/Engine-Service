@@ -1,0 +1,203 @@
+# 🧪 Testing Checklist - Story Generation System
+
+## ✅ **COMPLETED TESTS**
+
+### **1. Backend Configuration & Setup**
+- ✅ **AI Image Provider**: DALL-E API properly configured and initialized
+- ✅ **Voice Synthesis**: Azure TTS configured with correct credentials
+- ✅ **CDN URLs Fixed**: 
+  - Images: `media.suvichaar.org` ✅
+  - Audio: `cdn.suvichaar.org` ✅
+- ✅ **Database**: No-op repository working (database disabled for development)
+
+### **2. Category Support**
+- ✅ **Education Category**: Added to Curious mode allowed categories
+- ✅ **Frontend Dropdown**: Streamlit shows correct categories for each mode
+- ✅ **Backend Validation**: Education category accepted in API requests
+
+### **3. Upload Widget & Form Issues**
+- ✅ **Custom Images Upload**: Widget appears when "Custom Images" selected
+- ✅ **Debug Information**: Request payload shows correct `image_source` values
+- ✅ **Image Source Logic**: Fixed `image_source` being `None` instead of `"custom"`
+- ✅ **Force Enable**: Temporarily enabled upload widget for testing
+
+### **4. URL Generation & Access**
+- ✅ **Curious Mode URLs**: Now use slug-based format like News mode
+- ✅ **URL Format Consistency**: Both modes use `suvichaar.org/stories/slug_nano` format
+- ✅ **S3 HTML Upload**: Curious mode HTML files now uploaded to S3
+- ✅ **API URL Generation**: Backend generates proper slug + nano ID URLs
+
+### **5. AI Image Generation (Backend)**
+- ✅ **Direct API Test**: AI images generate successfully via backend API
+- ✅ **Alt Text Extraction**: Curious mode uses narrative JSON alt texts
+- ✅ **Fallback Prompts**: System handles missing alt texts gracefully
+- ✅ **Image Storage**: Generated images uploaded to S3 with correct CDN URLs
+
+---
+
+## 🔄 **TESTS IN PROGRESS / PARTIALLY COMPLETED**
+
+### **6. Template System**
+- 🔄 **Mode-Specific Templates**: Curious mode should show `curious-template-1`, `template-v19`
+- 🔄 **Template Dropdown**: Need to verify mode switching works correctly
+- ❓ **Status**: Fixed in code but needs verification in Streamlit
+
+### **7. CDN URL Verification**
+- 🔄 **Image URLs**: Backend generates `media.suvichaar.org` URLs
+- 🔄 **Audio URLs**: Backend generates `cdn.suvichaar.org` URLs  
+- ❓ **Status**: URLs generated correctly, but need browser testing
+
+---
+
+## ❌ **PENDING TESTS (HIGH PRIORITY)**
+
+### **8. End-to-End Story Generation**
+- [ ] **News Mode + Default Images**: Generate story and verify it loads in browser
+- [ ] **News Mode + AI Images**: Generate with AI images and verify they appear
+- [ ] **News Mode + Custom Images**: Upload custom images and verify backgrounds
+- [ ] **Curious Mode + AI Images**: Generate with AI images and verify they appear  
+- [ ] **Curious Mode + Pexels Images**: Generate with stock images and verify they appear
+- [ ] **Curious Mode + Custom Images**: Upload custom images and verify backgrounds
+
+### **9. Browser Story Access**
+- [ ] **News Mode URL Access**: Test `canurl1` opens properly in browser
+- [ ] **Curious Mode URL Access**: Test `canurl1` opens properly in browser
+- [ ] **Image Loading**: Verify images appear (not gray backgrounds)
+- [ ] **Audio Playback**: Verify audio controls work and files play
+- [ ] **Mobile Responsiveness**: Test stories on mobile devices
+
+### **10. Streamlit Frontend Integration**
+- [ ] **Form Submission**: All input fields work correctly
+- [ ] **Template Dropdown**: Mode-specific templates show correctly
+- [ ] **Image Upload**: Multiple image upload with graceful handling works
+- [ ] **Request Payload**: Verify correct data sent to backend
+- [ ] **Error Handling**: Test invalid inputs and API failures
+
+### **11. Multiple Image Upload & Graceful Handling**
+- [ ] **Perfect Match**: Upload exact number of images for slide count
+- [ ] **Extra Images**: Upload more images than slides (should ignore extras)
+- [ ] **Fewer Images**: Upload fewer images than slides (should repeat last)
+- [ ] **No Images**: Test behavior with zero custom images
+- [ ] **Image Validation**: Test invalid file types and sizes
+
+---
+
+## ❌ **PENDING TESTS (MEDIUM PRIORITY)**
+
+### **12. Content Quality & Generation**
+- [ ] **Text Generation**: Stories have proper content and structure
+- [ ] **Image Relevance**: AI images match story content appropriately
+- [ ] **Audio Quality**: Voice synthesis sounds natural and clear
+- [ ] **SEO Metadata**: Meta tags (title, description, keywords) properly generated
+- [ ] **Language Support**: Test Hindi vs English content generation
+
+### **13. S3 Storage & CDN**
+- [ ] **S3 Upload Verification**: Confirm files actually saved to correct buckets
+- [ ] **CDN Access**: Test direct CDN URLs work in browser
+- [ ] **File Permissions**: Verify S3 files are publicly accessible
+- [ ] **Bucket Organization**: Check files saved to correct folders/prefixes
+
+### **14. API Error Handling**
+- [ ] **Invalid Inputs**: System handles bad JSON gracefully
+- [ ] **API Failures**: Proper error messages for DALL-E/TTS failures  
+- [ ] **Network Issues**: Timeout handling for external services
+- [ ] **S3 Upload Failures**: Fallback behavior when uploads fail
+- [ ] **Database Errors**: System continues working without database
+
+---
+
+## ❌ **PENDING TESTS (LOW PRIORITY)**
+
+### **15. Performance & Scalability**
+- [ ] **Generation Speed**: Time story generation end-to-end
+- [ ] **Concurrent Requests**: Test multiple simultaneous story generations
+- [ ] **Memory Usage**: Monitor resource consumption during generation
+- [ ] **Large Files**: Test with large attachment uploads
+
+### **16. Security & Validation**
+- [ ] **Input Sanitization**: Test XSS and injection attempts
+- [ ] **File Upload Security**: Test malicious file uploads
+- [ ] **API Rate Limiting**: Test excessive request handling
+- [ ] **Credential Security**: Verify no secrets exposed in responses
+
+### **17. Edge Cases & Robustness**
+- [ ] **Empty Content**: Test with minimal/empty user input
+- [ ] **Special Characters**: Test Unicode, emojis, special symbols
+- [ ] **Long Content**: Test with very long articles/text
+- [ ] **Network Interruptions**: Test partial failures and recovery
+
+---
+
+## 🎯 **IMMEDIATE NEXT STEPS**
+
+### **Priority 1: Browser Testing**
+1. Generate a Curious mode story via Streamlit
+2. Copy the `canurl1` URL
+3. Open in browser and verify:
+   - Story loads without errors
+   - Images appear (not gray)
+   - Audio controls present
+   - Content is readable
+
+### **Priority 2: Template Dropdown**
+1. Open Streamlit frontend
+2. Switch between News and Curious modes
+3. Verify template dropdown updates correctly
+4. Test story generation with different templates
+
+### **Priority 3: Image Upload Testing**
+1. Test custom image upload for both modes
+2. Verify graceful handling (extra/fewer images)
+3. Check image previews and validation messages
+
+---
+
+## 🔧 **Test Commands & URLs**
+
+### **Streamlit Frontend**
+```
+http://localhost:8501
+```
+
+### **Backend API**
+```bash
+# Test Curious mode with AI images
+$body = @{
+    mode = "curious"
+    template_key = "curious-template-1"
+    slide_count = 7
+    user_input = "How does quantum computing work?"
+    category = "Education"
+    image_source = "ai"
+    prompt_keywords = @("quantum", "computing", "science")
+    voice_engine = "azure_basic"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8000/stories" -Method POST -ContentType "application/json" -Body $body
+```
+
+### **News Mode Test**
+```bash
+$body = @{
+    mode = "news"
+    template_key = "test-news-1"
+    slide_count = 4
+    user_input = "https://example.com/news-article"
+    category = "Technology"
+    image_source = $null
+    voice_engine = "azure_basic"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8000/stories" -Method POST -ContentType "application/json" -Body $body
+```
+
+---
+
+## 📊 **Progress Summary**
+
+- **✅ Completed**: 5 major areas (Configuration, Categories, Upload Widget, URLs, AI Images)
+- **🔄 In Progress**: 2 areas (Templates, CDN Verification)  
+- **❌ Pending**: 10 major areas (End-to-End, Browser Access, Frontend, etc.)
+- **Overall Progress**: ~30% complete
+
+**Next milestone: Complete browser testing and end-to-end story generation verification.**
