@@ -108,11 +108,41 @@
 - [ ] **Bucket Organization**: Check files saved to correct folders/prefixes
 
 ### **14. API Error Handling**
-- [ ] **Invalid Inputs**: System handles bad JSON gracefully
+- ✅ **Invalid Inputs**: System handles bad JSON gracefully - **COMPLETED** ✅
+  - Malformed JSON returns 422 Unprocessable Entity
+  - Missing required fields return 422 with validation errors
+  - Invalid field values return 422 with validation errors
+  - Wrong data types return 422 with type validation errors
+  - Test script: `test_error_handling.py` (Tests 1.1-1.4)
 - [ ] **API Failures**: Proper error messages for DALL-E/TTS failures  
+  - DALL-E API failure: Retry 3 times with exponential backoff
+  - DALL-E content policy violation: Simpler prompt on retry
+  - TTS failure: Story generated, audio might be missing
+  - **Testing Method**: Use invalid endpoint URLs (keep real credentials safe)
+    - DALL-E: Set `[ai_image] endpoint = "https://invalid-endpoint.com/api"`
+    - TTS: Set invalid TTS endpoint URL
+  - Test script: `test_error_handling.py` (Tests 2.1-2.4)
+  - **Note**: No need to break credentials - just use unreachable endpoints
 - [ ] **Network Issues**: Timeout handling for external services
+  - httpx timeout (30 seconds) triggers retry
+  - Exponential backoff on network failures
+  - **Testing Method**: Use unreachable endpoint (e.g., `https://192.0.2.1/api`)
+  - Test script: `test_error_handling.py`
+  - **Note**: Can use RFC 3330 test IP range (192.0.2.0/24) for unreachable endpoints
 - [ ] **S3 Upload Failures**: Fallback behavior when uploads fail
-- [ ] **Database Errors**: System continues working without database
+  - S3 upload errors: Story generation continues
+  - S3 upload errors logged but don't fail story creation
+  - **Testing Method**: Use invalid bucket name (keep real credentials safe)
+    - Set `[aws] AWS_BUCKET = "non-existent-bucket-12345"`
+  - Test script: `test_error_handling.py` (Test 4.1)
+  - **Note**: No need to break credentials - just use non-existent bucket
+- ✅ **Database Errors**: System continues working without database - **COMPLETED** ✅
+  - Database connection failure: Story generation succeeds
+  - Database save errors logged as non-critical
+  - Story returned successfully even if database save fails
+  - **Testing Method**: Use invalid database URL (e.g., `postgresql://invalid@192.0.2.1:5432/invalid`)
+  - Test script: `test_error_handling.py` (Test 5.1)
+  - **Note**: Safe to test - credentials not needed, just unreachable URL
 
 ---
 
@@ -205,10 +235,10 @@ Invoke-RestMethod -Uri "http://localhost:8000/stories" -Method POST -ContentType
 
 ## 📊 **Progress Summary**
 
-- **✅ Completed**: 6 major areas (Configuration, Categories, Upload Widget, URLs, AI Images, Custom Images)
+- **✅ Completed**: 7 major areas (Configuration, Categories, Upload Widget, URLs, AI Images, Custom Images, Error Handling - Partial)
 - **🔄 In Progress**: 2 areas (Templates, CDN Verification)  
-- **❌ Pending**: 9 major areas (End-to-End partially done, Browser Access, Frontend, etc.)
-- **Overall Progress**: ~45% complete
+- **❌ Pending**: 8 major areas (End-to-End partially done, Browser Access, Frontend, etc.)
+- **Overall Progress**: ~50% complete
 
 **Recent Achievements**: 
 - ✅ News Mode + Custom Images working correctly with proper CDN URLs!
@@ -216,5 +246,9 @@ Invoke-RestMethod -Uri "http://localhost:8000/stories" -Method POST -ContentType
 - ✅ News Mode + AI Images working correctly
 - ✅ Curious Mode + AI Images working correctly
 - ✅ Curious Mode + Pexels Images working correctly
+- ✅ API Error Handling - Invalid Inputs tested and working correctly
+- ✅ API Error Handling - Database Errors tested and working correctly
 
-**Next milestone: Complete Curious Mode custom images and browser story access verification.**
+**Next milestone: Complete advanced error handling tests (API failures, S3 upload failures) using safe methods (invalid endpoints/URLs, not credentials) and browser story access verification.**
+
+**Testing Tip**: For error handling tests, use invalid endpoints/URLs instead of breaking credentials. This is safer and easier to restore.
