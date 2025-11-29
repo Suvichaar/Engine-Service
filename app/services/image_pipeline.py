@@ -22,6 +22,7 @@ class ImageContent:
     content: bytes
     filename: str
     description: Optional[str] = None
+    original_s3_key: Optional[str] = None  # Preserve original S3 key if image is already in S3
 
 
 class ImageProvider(Protocol):
@@ -105,8 +106,12 @@ class AIImageProvider:
         
         # For News mode with custom cover, generate images based on slide_count
         # slide_count = cover (1) + middle slides + CTA (1)
-        # So we need images for: cover (1) + middle slides (slide_count - 2)
+        # So we need images for: cover (1) + middle slides + CTA (slide_count - 1 total slides after cover)
+        logger = logging.getLogger(__name__)
         if payload.mode.value == "news" and payload.slide_count:
+            logger.info("🎨 Generating AI images for News mode: slide_count=%d, deck_slides=%d", 
+                       payload.slide_count, len(deck.slides))
+            
             # Generate cover image (first slide)
             if deck.slides:
                 cover_slide = deck.slides[0]
@@ -114,20 +119,58 @@ class AIImageProvider:
                     prompt = f"{cover_slide.text or 'News cover'} | keywords: {prompt_keywords}"
                     try:
                         contents.append(self._generate_image(cover_slide.placeholder_id, prompt))
+                        logger.info("✅ Generated cover image (index 0)")
                     except Exception as exc:
-                        logging.getLogger(__name__).warning("AI image generation failed for cover: %s", exc)
+                        logger.warning("❌ AI image generation failed for cover: %s", exc)
+                else:
+                    logger.info("⏭️ Skipping cover image (already has image_url)")
+            else:
+                logger.warning("⚠️ No slides in deck, cannot generate cover image")
             
-            # Generate middle slide images (slide_count - 2)
-            middle_slides_count = max(1, payload.slide_count - 2)
-            for idx in range(1, min(middle_slides_count + 1, len(deck.slides))):
+            # Generate images for all remaining slides (middle + CTA)
+            # Cover is index 0, so generate images for indices 1 to (slide_count - 1)
+            # This includes both middle slides and the CTA slide
+            max_idx = min(payload.slide_count, len(deck.slides))
+            logger.info("🔄 Generating images for slides 1 to %d (indices 1 to %d)", max_idx, max_idx - 1)
+            
+            import time
+            last_successful_image = None  # Fallback: use last successful image if one fails
+            
+            for idx in range(1, max_idx):
                 slide = deck.slides[idx]
                 if slide.image_url:
+                    logger.debug("⏭️ Skipping slide %d (already has image_url)", idx)
                     continue
-                prompt = f"{slide.text or 'Visual concept'} | keywords: {prompt_keywords}"
+                
+                # Create prompt - limit length to avoid API issues
+                slide_text = (slide.text or 'Visual concept')[:200]  # Limit text length
+                prompt = f"{slide_text} | keywords: {prompt_keywords}"
+                
+                # Add delay between requests to avoid rate limiting (except for first request)
+                if idx > 1:
+                    delay = 2.0  # 2 second delay between requests
+                    logger.debug("⏳ Waiting %.1f seconds before next image generation...", delay)
+                    time.sleep(delay)
+                
                 try:
-                    contents.append(self._generate_image(slide.placeholder_id, prompt))
+                    image_content = self._generate_image(slide.placeholder_id, prompt)
+                    contents.append(image_content)
+                    last_successful_image = image_content
+                    logger.info("✅ Generated image for slide %d (index %d)", idx + 1, idx)
                 except Exception as exc:
-                    logging.getLogger(__name__).warning("AI image generation failed: %s", exc)
+                    logger.warning("❌ AI image generation failed for slide %d (index %d): %s", idx + 1, idx, exc)
+                    # If we have a fallback image, use it (repeat last successful image)
+                    if last_successful_image:
+                        logger.info("🔄 Using last successful image as fallback for slide %d", idx + 1)
+                        # Create a copy with different placeholder_id
+                        from copy import deepcopy
+                        fallback_content = deepcopy(last_successful_image)
+                        fallback_content.placeholder_id = slide.placeholder_id
+                        contents.append(fallback_content)
+                    else:
+                        logger.error("❌ No fallback available for slide %d, skipping", idx + 1)
+            
+            logger.info("📊 Total images generated: %d (expected: %d)", len(contents), payload.slide_count)
         else:
             # For Curious mode, extract alt text from narrative JSON in payload metadata
             # For other modes, use slide text
@@ -192,10 +235,17 @@ class AIImageProvider:
                     logger.error(f"❌ AI image generation failed for slide {idx} ({slide.placeholder_id}): {exc}", exc_info=True)
         return contents
 
-    def _generate_image(self, placeholder_id: str, prompt: str) -> ImageContent:
+    def _generate_image(self, placeholder_id: str, prompt: str, retry_count: int = 3) -> ImageContent:
         import base64
         import logging
+        import time
         logger = logging.getLogger(__name__)
+        
+        # Limit prompt length to avoid API issues (DALL-E has prompt length limits)
+        max_prompt_length = 1000
+        if len(prompt) > max_prompt_length:
+            logger.warning("Prompt too long (%d chars), truncating to %d chars", len(prompt), max_prompt_length)
+            prompt = prompt[:max_prompt_length]
         
         headers = {
             "api-key": self._api_key,
@@ -203,10 +253,52 @@ class AIImageProvider:
         }
         body = {"prompt": prompt, "size": "1024x1024"}
         
-        with httpx.Client(timeout=30.0) as client:
-            response = client.post(self._endpoint, headers=headers, json=body)
-            response.raise_for_status()
-            data = response.json()
+        last_exception = None
+        for attempt in range(retry_count):
+            try:
+                with httpx.Client(timeout=30.0) as client:
+                    response = client.post(self._endpoint, headers=headers, json=body)
+                    
+                    if response.status_code == 400:
+                        # Try to get error details
+                        try:
+                            error_data = response.json()
+                            logger.warning("API returned 400 Bad Request. Error details: %s", error_data)
+                        except:
+                            logger.warning("API returned 400 Bad Request. Response text: %s", response.text[:200])
+                    
+                    response.raise_for_status()
+                    data = response.json()
+                    break  # Success, exit retry loop
+            except httpx.HTTPStatusError as e:
+                last_exception = e
+                if e.response.status_code == 429:  # Rate limit
+                    wait_time = (attempt + 1) * 5  # Exponential backoff: 5s, 10s, 15s
+                    logger.warning("Rate limited (429), waiting %d seconds before retry %d/%d", wait_time, attempt + 1, retry_count)
+                    time.sleep(wait_time)
+                elif e.response.status_code == 400 and attempt < retry_count - 1:
+                    # For 400 errors, try with a simpler prompt
+                    logger.warning("400 Bad Request on attempt %d/%d, trying simpler prompt", attempt + 1, retry_count)
+                    # Simplify prompt: remove keywords, use shorter text
+                    simple_prompt = prompt.split("|")[0].strip()[:200]  # Take first part, limit length
+                    body["prompt"] = simple_prompt
+                    time.sleep(2)  # Wait before retry
+                else:
+                    # For other errors or last attempt, raise
+                    if attempt == retry_count - 1:
+                        raise
+                    time.sleep(2)  # Wait before retry
+            except Exception as e:
+                last_exception = e
+                if attempt < retry_count - 1:
+                    wait_time = (attempt + 1) * 2
+                    logger.warning("Error on attempt %d/%d: %s. Retrying in %d seconds...", attempt + 1, retry_count, e, wait_time)
+                    time.sleep(wait_time)
+                else:
+                    raise
+        
+        if last_exception:
+            raise last_exception
         
         logger.debug(f"DALL-E API response keys: {list(data.keys())}")
         
@@ -273,9 +365,10 @@ class PexelsImageProvider:
                     except Exception as exc:
                         logging.getLogger(__name__).warning("Pexels fetch failed for cover: %s", exc)
             
-            # Generate middle slide images (slide_count - 2)
-            middle_slides_count = max(1, payload.slide_count - 2)
-            for idx in range(1, min(middle_slides_count + 1, len(deck.slides))):
+            # Generate images for all remaining slides (middle + CTA)
+            # Cover is index 0, so generate images for indices 1 to (slide_count - 1)
+            # This includes both middle slides and the CTA slide
+            for idx in range(1, min(payload.slide_count, len(deck.slides))):
                 slide = deck.slides[idx]
                 if slide.image_url:
                     continue
@@ -283,7 +376,7 @@ class PexelsImageProvider:
                     # Use different image_number for variety
                     contents.append(self._fetch_image(slide.placeholder_id, query[0], image_number=idx))
                 except Exception as exc:
-                    logging.getLogger(__name__).warning("Pexels fetch failed: %s", exc)
+                    logging.getLogger(__name__).warning("Pexels fetch failed for slide %d: %s", idx, exc)
         else:
             # Original behavior for other modes
             for slide, term in zip(deck.slides, query * len(deck.slides)):
@@ -387,6 +480,7 @@ class UserUploadProvider:
     def _to_content(self, placeholder_id: str, attachment: str) -> ImageContent:
         """Convert attachment (URL, S3 URI, or file path) to ImageContent with actual bytes."""
         import logging
+        from urllib.parse import urlparse
         logger = logging.getLogger(__name__)
         
         # Extract filename from attachment
@@ -396,6 +490,7 @@ class UserUploadProvider:
             filename = filename.split("?")[0]
         
         image_bytes = None
+        original_s3_key = None  # Preserve original S3 key if attachment is S3 URI
         
         try:
             # Case 1: HTTP/HTTPS URL - download the image
@@ -406,9 +501,19 @@ class UserUploadProvider:
                     image_bytes = response.content
                     logger.info("Downloaded image from URL: %s (%d bytes)", attachment, len(image_bytes))
             
-            # Case 2: S3 URI (s3://bucket/key) - load from S3
+            # Case 2: S3 URI (s3://bucket/key) - extract key and optionally load from S3
             elif attachment.startswith("s3://"):
-                image_bytes = self._load_from_s3(attachment, logger)
+                # Extract S3 key from URI (preserve for CDN URL generation)
+                parsed = urlparse(attachment)
+                original_s3_key = parsed.path.lstrip("/")  # Remove leading slash
+                logger.info("Detected S3 URI: %s, extracted key: %s", attachment, original_s3_key)
+                
+                # For S3 URIs, we don't need to download - the image is already in S3
+                # We'll use the original key directly in storage service
+                # But we still need some bytes for validation (minimal)
+                # Actually, let's not download at all - just use empty bytes and let storage service handle it
+                image_bytes = b""  # Empty bytes - storage service will skip upload if original_s3_key is provided
+                logger.info("Skipping download for S3 URI (will use original key: %s)", original_s3_key)
             
             # Case 3: Local file path - read from filesystem
             else:
@@ -425,7 +530,7 @@ class UserUploadProvider:
             # Fallback: return placeholder content (will fail gracefully later)
             image_bytes = f"UPLOAD_FAILED:{attachment}".encode("utf-8")
         
-        if image_bytes is None:
+        if image_bytes is None and original_s3_key is None:
             logger.warning("Could not load image bytes from attachment: %s", attachment)
             image_bytes = f"UPLOAD_FAILED:{attachment}".encode("utf-8")
         
@@ -434,6 +539,7 @@ class UserUploadProvider:
             content=image_bytes,
             filename=filename,
             description="User uploaded image",
+            original_s3_key=original_s3_key,
         )
     
     def _load_from_s3(self, s3_uri: str, logger: logging.Logger) -> Optional[bytes]:
@@ -581,33 +687,66 @@ class S3ImageStorageService:
 
     def store(self, *, content: ImageContent, source: str) -> ImageAsset:
         """Upload image to S3 and return ImageAsset with CDN URLs."""
-        object_key = f"{self._prefix}{uuid4()}/{content.filename}"
-        s3_client = self._get_s3_client()
-
-        if s3_client:
-            try:
-                # Determine content type from filename
-                content_type = "image/png"
-                if content.filename.lower().endswith((".jpg", ".jpeg")):
-                    content_type = "image/jpeg"
-                elif content.filename.lower().endswith(".webp"):
-                    content_type = "image/webp"
-
-                s3_client.put_object(
-                    Bucket=self._bucket,
-                    Key=object_key,
-                    Body=content.content,
-                    ContentType=content_type,
-                )
-                self._logger.info("Uploaded image to s3://%s/%s", self._bucket, object_key)
-            except Exception as e:
-                self._logger.error("Failed to upload image to S3: %s", e)
+        # If image is already in S3 (has original_s3_key), use that key instead of uploading
+        if content.original_s3_key:
+            object_key = content.original_s3_key
+            self._logger.info("Using existing S3 key (skipping upload): s3://%s/%s", self._bucket, object_key)
         else:
-            self._logger.warning("S3 client unavailable, simulating upload for %s", object_key)
+            # Generate new object key and upload
+            object_key = f"{self._prefix}{uuid4()}/{content.filename}"
+            s3_client = self._get_s3_client()
+
+            if s3_client:
+                try:
+                    # Determine content type from filename
+                    content_type = "image/png"
+                    if content.filename.lower().endswith((".jpg", ".jpeg")):
+                        content_type = "image/jpeg"
+                    elif content.filename.lower().endswith(".webp"):
+                        content_type = "image/webp"
+
+                    s3_client.put_object(
+                        Bucket=self._bucket,
+                        Key=object_key,
+                        Body=content.content,
+                        ContentType=content_type,
+                    )
+                    self._logger.info("Uploaded image to s3://%s/%s", self._bucket, object_key)
+                except Exception as e:
+                    self._logger.error("Failed to upload image to S3: %s", e)
+            else:
+                self._logger.warning("S3 client unavailable, simulating upload for %s", object_key)
 
         # Generate CDN URLs for resized variants (resizing would be done by Lambda/CloudFront)
+        # Use base64 template format for CloudFront resize URLs (same as HTML renderer)
         from pydantic import HttpUrl
-        resized_urls = [HttpUrl(self._cdn(object_key, suffix)) for suffix in self._resize_variants.keys()]
+        import json
+        resized_urls = []
+        for suffix, dimensions in self._resize_variants.items():
+            # Parse dimensions (e.g., "720x1280" -> width=720, height=1280)
+            if "x" in dimensions:
+                width, height = map(int, dimensions.split("x"))
+            else:
+                # Default dimensions if format is unexpected
+                width, height = 720, 1280
+            
+            # Generate base64-encoded template URL (same format as HTML renderer)
+            template = {
+                "bucket": self._bucket,
+                "key": object_key,
+                "edits": {
+                    "resize": {
+                        "width": width,
+                        "height": height,
+                        "fit": "cover",
+                    }
+                },
+            }
+            encoded = base64.urlsafe_b64encode(json.dumps(template).encode()).decode()
+            cdn_url = f"{self._cdn_base}{encoded}"
+            self._logger.info("Generated CDN URL for variant %s: %s (S3 key: %s)", suffix, cdn_url[:100], object_key)
+            resized_urls.append(HttpUrl(cdn_url))
+        
         return ImageAsset(
             source=source,
             original_object_key=object_key,
@@ -616,7 +755,9 @@ class S3ImageStorageService:
         )
 
     def _cdn(self, object_key: str, variant: str) -> str:
-        """Generate CDN URL for a variant."""
+        """Generate CDN URL for a variant (legacy method - now using base64 template in store())."""
+        # This method is kept for backward compatibility but should not be used
+        # The store() method now generates base64 template URLs directly
         return f"{self._cdn_base}{variant}/{object_key}"
 
 

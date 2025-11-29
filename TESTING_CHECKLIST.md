@@ -33,6 +33,12 @@
 - ✅ **Fallback Prompts**: System handles missing alt texts gracefully
 - ✅ **Image Storage**: Generated images uploaded to S3 with correct CDN URLs
 
+### **5a. Custom Image Handling (Backend)**
+- ✅ **S3 URI Support**: Custom images from S3 URIs properly extracted and used
+- ✅ **CDN URL Generation**: Base64 template URLs generated with `media.suvichaar.org`
+- ✅ **No Re-upload**: Original S3 keys preserved, no duplicate uploads
+- ✅ **News Mode Custom Images**: Working correctly with proper CDN URLs
+
 ---
 
 ## 🔄 **TESTS IN PROGRESS / PARTIALLY COMPLETED**
@@ -52,11 +58,15 @@
 ## ❌ **PENDING TESTS (HIGH PRIORITY)**
 
 ### **8. End-to-End Story Generation**
-- [ ] **News Mode + Default Images**: Generate story and verify it loads in browser
-- [ ] **News Mode + AI Images**: Generate with AI images and verify they appear
-- [ ] **News Mode + Custom Images**: Upload custom images and verify backgrounds
-- [ ] **Curious Mode + AI Images**: Generate with AI images and verify they appear  
-- [ ] **Curious Mode + Pexels Images**: Generate with stock images and verify they appear
+- ✅ **News Mode + Default Images**: Generate story and verify it loads in browser - **COMPLETED** ✅
+- ✅ **News Mode + AI Images**: Generate with AI images and verify they appear - **COMPLETED** ✅
+- ✅ **News Mode + Custom Images**: Upload custom images and verify backgrounds - **COMPLETED** ✅
+  - Custom images from S3 URIs working correctly
+  - CDN URLs generated with `media.suvichaar.org` and base64 template format
+  - Original S3 keys preserved (no re-upload)
+  - Images appear correctly in generated stories
+- ✅ **Curious Mode + AI Images**: Generate with AI images and verify they appear - **COMPLETED** ✅
+- ✅ **Curious Mode + Pexels Images**: Generate with stock images and verify they appear - **COMPLETED** ✅
 - [ ] **Curious Mode + Custom Images**: Upload custom images and verify backgrounds
 
 ### **9. Browser Story Access**
@@ -195,9 +205,16 @@ Invoke-RestMethod -Uri "http://localhost:8000/stories" -Method POST -ContentType
 
 ## 📊 **Progress Summary**
 
-- **✅ Completed**: 5 major areas (Configuration, Categories, Upload Widget, URLs, AI Images)
+- **✅ Completed**: 6 major areas (Configuration, Categories, Upload Widget, URLs, AI Images, Custom Images)
 - **🔄 In Progress**: 2 areas (Templates, CDN Verification)  
-- **❌ Pending**: 10 major areas (End-to-End, Browser Access, Frontend, etc.)
-- **Overall Progress**: ~30% complete
+- **❌ Pending**: 9 major areas (End-to-End partially done, Browser Access, Frontend, etc.)
+- **Overall Progress**: ~45% complete
 
-**Next milestone: Complete browser testing and end-to-end story generation verification.**
+**Recent Achievements**: 
+- ✅ News Mode + Custom Images working correctly with proper CDN URLs!
+- ✅ News Mode + Default Images verified in browser
+- ✅ News Mode + AI Images working correctly
+- ✅ Curious Mode + AI Images working correctly
+- ✅ Curious Mode + Pexels Images working correctly
+
+**Next milestone: Complete Curious Mode custom images and browser story access verification.**

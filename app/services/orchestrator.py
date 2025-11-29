@@ -219,7 +219,14 @@ class StoryOrchestrator:
 
         # Save to database only if enabled
         if self.save_to_database:
-            self.repository.save(record)
+            try:
+                self.repository.save(record)
+                logger.debug("Story saved to database successfully")
+            except Exception as e:
+                # Database save is non-critical - story generation should continue even if save fails
+                logger.warning("Failed to save story to database (non-critical): %s", e)
+                logger.debug("Database error details:", exc_info=True)
+                # Continue without database save - story generation is still successful
 
         # Generate and save HTML if renderer is available
         html_file_path = None

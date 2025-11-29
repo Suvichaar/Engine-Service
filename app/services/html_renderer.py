@@ -177,18 +177,22 @@ class PlaceholderMapper:
             asset = record.image_assets[0]  # Cover image is at index 0
             # Generate portrait resolution URL (720x1280) for cover
             if hasattr(asset, "original_object_key") and asset.original_object_key:
+                # Always use _generate_resized_url_from_s3_key for custom images with S3 key
                 cover_url = self._generate_resized_url_from_s3_key(asset.original_object_key, 720, 1280)
                 placeholders["image0"] = cover_url
                 placeholders["potraitcoverurl"] = cover_url
                 placeholders["portraitcoverurl"] = cover_url
                 placeholders["msthumbnailcoverurl"] = self._generate_resized_url_from_s3_key(asset.original_object_key, 300, 300)
-            elif asset.resized_variants:
+                self._logger.info("Custom cover image: Generated URL from S3 key: %s", cover_url[:100])
+            elif asset.resized_variants and len(asset.resized_variants) > 0:
+                # Fallback: use resized_variants (should be base64 template format)
                 cover_url = str(asset.resized_variants[0])
                 placeholders["image0"] = cover_url
                 placeholders["potraitcoverurl"] = cover_url
                 placeholders["portraitcoverurl"] = cover_url
-                # Generate thumbnail from first variant or use default
+                # For thumbnail, if variant is base64 template, extract and modify, or use default
                 placeholders["msthumbnailcoverurl"] = self._generate_resized_url(cover_url, 300, 300)
+                self._logger.warning("Custom cover image: Using resized_variants fallback (no original_object_key): %s", cover_url[:100])
             else:
                 # Fallback to default
                 default_cover = self._default_cover_image
@@ -197,7 +201,7 @@ class PlaceholderMapper:
                 placeholders["portraitcoverurl"] = placeholders["potraitcoverurl"]
                 placeholders["msthumbnailcoverurl"] = self._generate_resized_url(default_cover, 300, 300)
         else:
-            # Normal flow - use image assets or defaults
+            # Normal flow - use image assets or defaults (for AI images)
             cover_url = self._get_image_url(record.image_assets, 0, self._default_cover_image)
             placeholders["image0"] = cover_url
             
@@ -207,14 +211,23 @@ class PlaceholderMapper:
                 # Try to get S3 key from original_object_key to generate resize URLs
                 s3_key = asset.original_object_key if hasattr(asset, "original_object_key") else None
                 if s3_key:
-                    placeholders["potraitcoverurl"] = self._generate_resized_url_from_s3_key(s3_key, 720, 1280)
-                    placeholders["portraitcoverurl"] = placeholders["potraitcoverurl"]
+                    cover_resized = self._generate_resized_url_from_s3_key(s3_key, 720, 1280)
+                    placeholders["potraitcoverurl"] = cover_resized
+                    placeholders["portraitcoverurl"] = cover_resized
                     placeholders["msthumbnailcoverurl"] = self._generate_resized_url_from_s3_key(s3_key, 300, 300)
+                    self._logger.info("✅ Cover slide: Using AI image from S3 key: %s", cover_resized[:80])
+                elif asset.resized_variants and len(asset.resized_variants) > 0:
+                    cover_resized = str(asset.resized_variants[0])
+                    placeholders["potraitcoverurl"] = cover_resized
+                    placeholders["portraitcoverurl"] = cover_resized
+                    placeholders["msthumbnailcoverurl"] = cover_resized  # Use same for thumbnail
+                    self._logger.info("✅ Cover slide: Using AI image from resized_variants: %s", cover_resized[:80])
                 else:
                     # Fallback to default resized URLs
                     placeholders["potraitcoverurl"] = self._generate_resized_url(cover_url, 720, 1280)
                     placeholders["portraitcoverurl"] = placeholders["potraitcoverurl"]
                     placeholders["msthumbnailcoverurl"] = self._generate_resized_url(cover_url, 300, 300)
+                    self._logger.warning("⚠️ Cover slide: No S3 key or variants, using fallback: %s", cover_url[:80])
             else:
                 # No assets, use default with resizing
                 # For News mode, ensure default cover image is used for cover and CTA slides
@@ -260,43 +273,50 @@ class PlaceholderMapper:
                     asset = record.image_assets[asset_idx]
                     # For custom images, generate portrait resolution (720x1280) from S3 key
                     if hasattr(asset, "original_object_key") and asset.original_object_key:
-                        # Generate portrait resolution URL (720x1280) from S3 key
+                        # Generate portrait resolution URL (720x1280) from S3 key using base64 template
                         placeholders[f"s{idx}image1"] = self._generate_resized_url_from_s3_key(
                             asset.original_object_key, 720, 1280
                         )
-                    elif asset.resized_variants:
-                        # Fallback to first resized variant if available
+                        self._logger.debug("Custom image slide %d: Generated URL from S3 key: %s", idx, placeholders[f"s{idx}image1"][:80])
+                    elif asset.resized_variants and len(asset.resized_variants) > 0:
+                        # Fallback to first resized variant if available (should be base64 template format now)
                         placeholders[f"s{idx}image1"] = str(asset.resized_variants[0])
-                    elif hasattr(asset, "original_object_key") and asset.original_object_key:
-                        # Generate URL from S3 key (no resize)
-                        placeholders[f"s{idx}image1"] = f"{self._cdn_prefix_media}{asset.original_object_key}"
+                        self._logger.debug("Custom image slide %d: Using resized variant: %s", idx, placeholders[f"s{idx}image1"][:80])
                     else:
+                        # No S3 key or variants available, use default
                         placeholders[f"s{idx}image1"] = self._default_bg_image
+                        self._logger.warning("Custom image slide %d: No S3 key or variants, using default", idx)
                 else:
                     placeholders[f"s{idx}image1"] = self._default_bg_image
         else:
-            # Normal flow - use image_assets or default (for both News and Curious)
+            # Normal flow - use image_assets or default (for both News AI and Curious)
+            self._logger.info("Setting slide image placeholders for AI images - have %d image_assets, %d slides", 
+                            len(record.image_assets) if record.image_assets else 0, len(record.slide_deck.slides))
             for idx in range(1, len(record.slide_deck.slides) + 1):
-                # For curious mode, image_assets[0] is cover, image_assets[1] is slide 2, etc.
+                # For both modes, image_assets[0] is cover, image_assets[1] is slide 2, etc.
                 # So s1image1 = image_assets[0], s2image1 = image_assets[1], etc.
                 asset_idx = idx - 1  # Convert slide number to asset index
                 if asset_idx < len(record.image_assets):
                     asset = record.image_assets[asset_idx]
-                    # For Curious mode, generate portrait resolution (720x1280) from S3 key
-                    if record.mode == Mode.CURIOUS and hasattr(asset, "original_object_key") and asset.original_object_key:
-                        # Generate portrait resolution URL (720x1280) from S3 key for Curious mode
-                        placeholders[f"s{idx}image1"] = self._generate_resized_url_from_s3_key(
+                    # For both News (AI) and Curious mode, generate portrait resolution (720x1280) from S3 key
+                    if hasattr(asset, "original_object_key") and asset.original_object_key:
+                        # Generate portrait resolution URL (720x1280) from S3 key for both News (AI) and Curious mode
+                        placeholder_url = self._generate_resized_url_from_s3_key(
                             asset.original_object_key, 720, 1280
                         )
+                        placeholders[f"s{idx}image1"] = placeholder_url
+                        self._logger.debug("Set s%dimage1 = %s (from original_object_key)", idx, placeholder_url[:80])
                     elif asset.resized_variants:
-                        placeholders[f"s{idx}image1"] = str(asset.resized_variants[0])
-                    elif hasattr(asset, "original_object_key") and asset.original_object_key:
-                        # Generate URL from S3 key (no resize)
-                        placeholders[f"s{idx}image1"] = f"{self._cdn_prefix_media}{asset.original_object_key}"
+                        placeholder_url = str(asset.resized_variants[0])
+                        placeholders[f"s{idx}image1"] = placeholder_url
+                        self._logger.debug("Set s%dimage1 = %s (from resized_variants)", idx, placeholder_url[:80])
                     else:
                         placeholders[f"s{idx}image1"] = self._default_bg_image
+                        self._logger.warning("No valid image data for slide %d (asset_idx %d), using default", idx, asset_idx)
                 else:
                     placeholders[f"s{idx}image1"] = self._default_bg_image
+                    self._logger.warning("Asset index %d out of range (have %d assets), using default for slide %d", 
+                                       asset_idx, len(record.image_assets) if record.image_assets else 0, idx)
 
         # Audio URLs
         # s1audio1 for cover, s2audio1 for slide 2, etc.
@@ -419,11 +439,15 @@ class PlaceholderMapper:
             }
             encoded = base64.urlsafe_b64encode(json.dumps(template).encode()).decode()
             resized_url = f"{self._cdn_prefix_media}{encoded}"
+            self._logger.info("Generated resized URL from S3 key: %s -> %s (CDN prefix: %s)", s3_key, resized_url[:100], self._cdn_prefix_media)
             return resized_url
         except Exception as e:
             self._logger.warning("Failed to generate resized URL from S3 key: %s", e)
-            # Fallback: try to construct a simple URL
-            return f"{self._cdn_prefix_media}{s3_key}"
+            # Fallback: try to construct a simple URL (direct path, not base64 template)
+            # This should rarely happen, but if it does, return a direct CDN URL
+            fallback_url = f"{self._cdn_prefix_media}{s3_key}"
+            self._logger.warning("Using fallback URL format (not base64 template): %s", fallback_url)
+            return fallback_url
 
     def _generate_meta_description(self, record: StoryRecord) -> str:
         """Generate SEO meta description from story content using LLM if available, else fallback."""
@@ -594,6 +618,23 @@ class HTMLTemplateRenderer:
         self._logger.info("Placeholders after mapping - potraitcoverurl: %s", placeholders.get("potraitcoverurl", "NOT SET"))
         self._logger.info("Image source passed: %s, Mode: %s", image_source, record.mode)
 
+        # 2.5. Fix CTA slide placeholder for AI images BEFORE replacement
+        # CTA slide uses {{potraitcoverurl}} which should be cover image
+        # But for AI images, we want CTA to use last slide's image
+        # So we'll use a temporary placeholder for CTA that we'll replace later
+        if image_source == "ai" and record.mode == Mode.NEWS and record.image_assets and len(record.image_assets) > 0:
+            last_slide_num = len(record.slide_deck.slides)
+            cta_placeholder_key = f"s{last_slide_num}image1"
+            if cta_placeholder_key in placeholders:
+                cta_image_url = placeholders[cta_placeholder_key]
+                # Replace {{potraitcoverurl}} in CTA slide section with a temporary placeholder
+                import re
+                cta_pattern = r'(<amp-story-page id="cta-slide"[^>]*>.*?<amp-img src=")\{\{potraitcoverurl\}\}'
+                replacement = r'\1{{cta_image_url}}'
+                template_html = re.sub(cta_pattern, replacement, template_html, flags=re.DOTALL)
+                placeholders["cta_image_url"] = cta_image_url
+                self._logger.info("Set CTA slide to use last slide's AI image: %s", cta_image_url[:80])
+
         # 3. Replace basic placeholders
         filled_html = self._replace_placeholders(template_html, placeholders)
         
@@ -692,6 +733,18 @@ class HTMLTemplateRenderer:
         
         self._logger.debug("Generating %d slides (requested: %d, available: %d)", 
                           len(slides_to_generate), record.slide_count, len(record.slide_deck.slides))
+        
+        # Log image_assets info for debugging
+        if record.image_assets:
+            self._logger.info("📸 Image assets available: %d assets for %d slides", 
+                            len(record.image_assets), len(record.slide_deck.slides))
+            for i, asset in enumerate(record.image_assets[:5]):  # Log first 5
+                has_key = hasattr(asset, "original_object_key") and asset.original_object_key
+                has_variants = asset.resized_variants and len(asset.resized_variants) > 0
+                self._logger.info("  Asset[%d]: has_key=%s, has_variants=%s, source=%s", 
+                                i, has_key, has_variants, getattr(asset, 'source', 'unknown'))
+        else:
+            self._logger.warning("⚠️ No image_assets available!")
 
         for idx, slide_block in enumerate(slides_to_generate, start=1):
             # Clean markdown from slide text
@@ -722,15 +775,31 @@ class HTMLTemplateRenderer:
                 # News mode + blank image_source → use default polarisslide.png
                 image_url = default_bg
             else:
-                # Normal flow - use image_assets or default
+                # Normal flow for AI images - directly use image_assets
                 # idx=1 (first middle slide) → image_assets[1], idx=2 → image_assets[2], etc.
+                # This matches: cover=image_assets[0], first middle=image_assets[1], etc.
                 asset_idx = idx  # idx already starts at 1, so use directly (skip cover at index 0)
+                self._logger.debug("AI images: slide_num=%d, idx=%d, asset_idx=%d, total_assets=%d", 
+                                  slide_num, idx, asset_idx, len(record.image_assets) if record.image_assets else 0)
+                
                 if asset_idx < len(record.image_assets):
                     img_asset = record.image_assets[asset_idx]
-                    if img_asset.resized_variants:
+                    if hasattr(img_asset, "original_object_key") and img_asset.original_object_key:
+                        # Generate resized URL from S3 key using mapper
+                        image_url = self._mapper._generate_resized_url_from_s3_key(
+                            img_asset.original_object_key, 720, 1280
+                        )
+                        self._logger.info("✅ Using AI image for slide %d (asset_idx %d): %s", slide_num, asset_idx, image_url[:80])
+                    elif img_asset.resized_variants and len(img_asset.resized_variants) > 0:
                         image_url = str(img_asset.resized_variants[0])
+                        self._logger.info("✅ Using AI image (resized variant) for slide %d (asset_idx %d): %s", slide_num, asset_idx, image_url[:80])
                     else:
                         image_url = default_bg
+                        self._logger.warning("❌ No valid image data for slide %d (asset_idx %d), using default", slide_num, asset_idx)
+                else:
+                    image_url = default_bg
+                    self._logger.warning("❌ Asset index %d out of range (have %d assets), using default for slide %d", 
+                                       asset_idx, len(record.image_assets) if record.image_assets else 0, slide_num)
 
             # Get audio for this slide
             # voice_assets are now generated per slide in order:
