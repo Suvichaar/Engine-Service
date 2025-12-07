@@ -618,22 +618,64 @@ class HTMLTemplateRenderer:
         self._logger.info("Placeholders after mapping - potraitcoverurl: %s", placeholders.get("potraitcoverurl", "NOT SET"))
         self._logger.info("Image source passed: %s, Mode: %s", image_source, record.mode)
 
-        # 2.5. Fix CTA slide placeholder for AI images BEFORE replacement
-        # CTA slide uses {{potraitcoverurl}} which should be cover image
-        # But for AI images, we want CTA to use last slide's image
-        # So we'll use a temporary placeholder for CTA that we'll replace later
-        if image_source == "ai" and record.mode == Mode.NEWS and record.image_assets and len(record.image_assets) > 0:
-            last_slide_num = len(record.slide_deck.slides)
-            cta_placeholder_key = f"s{last_slide_num}image1"
-            if cta_placeholder_key in placeholders:
-                cta_image_url = placeholders[cta_placeholder_key]
-                # Replace {{potraitcoverurl}} in CTA slide section with a temporary placeholder
+        # 2.5. Fix CTA slide placeholder for AI/Pexels/Custom images BEFORE replacement
+        # CTA slide uses {{potraitcoverurl}} or {{cta_image_url}} which should be CTA image
+        # For News mode: use last slide's image
+        # For Curious mode: use CTA-specific image (placeholder_id="cta-slide")
+        # This applies to all image sources: ai, pexels, custom
+        if image_source in ["ai", "pexels", "custom"] and record.image_assets and len(record.image_assets) > 0:
+            cta_image_url = None
+            
+            if record.mode == Mode.NEWS:
+                # News mode: use last slide's image
+                last_slide_num = len(record.slide_deck.slides)
+                cta_placeholder_key = f"s{last_slide_num}image1"
+                if cta_placeholder_key in placeholders:
+                    cta_image_url = placeholders[cta_placeholder_key]
+                    self._logger.info("Set CTA slide to use last slide's AI image: %s", cta_image_url[:80])
+            elif record.mode == Mode.CURIOUS:
+                # Curious mode: CTA image is generated last, so it's the last image_asset
+                # Total slides = deck.slides (cover + middle) + 1 CTA
+                # So image_assets should have: cover (0) + middle slides (1..n) + CTA (last)
+                if record.image_assets and len(record.image_assets) > len(record.slide_deck.slides):
+                    # CTA image is the last one (after all deck slides)
+                    cta_asset = record.image_assets[-1]
+                    if hasattr(cta_asset, "original_object_key") and cta_asset.original_object_key:
+                        # Check if it's the CTA image by checking the S3 key (should contain "cta-slide")
+                        if "cta-slide" in cta_asset.original_object_key:
+                            cta_image_url = self._mapper._generate_resized_url_from_s3_key(
+                                cta_asset.original_object_key, 720, 1280
+                            )
+                            self._logger.info("Set CTA slide to use CTA-specific AI image: %s", cta_image_url[:80])
+                        else:
+                            # Still use it as CTA (it's the last image)
+                            cta_image_url = self._mapper._generate_resized_url_from_s3_key(
+                                cta_asset.original_object_key, 720, 1280
+                            )
+                            self._logger.info("Set CTA slide to use last AI image (likely CTA): %s", cta_image_url[:80])
+                    elif cta_asset.resized_variants and len(cta_asset.resized_variants) > 0:
+                        cta_image_url = str(cta_asset.resized_variants[0])
+                        self._logger.info("Set CTA slide to use last AI image variant (likely CTA): %s", cta_image_url[:80])
+                
+                # Fallback: use last slide's image if CTA-specific image not found
+                if not cta_image_url:
+                    last_slide_num = len(record.slide_deck.slides)
+                    cta_placeholder_key = f"s{last_slide_num}image1"
+                    if cta_placeholder_key in placeholders:
+                        cta_image_url = placeholders[cta_placeholder_key]
+                        self._logger.warning("CTA-specific image not found, using last slide's image: %s", cta_image_url[:80])
+            
+            if cta_image_url:
+                # Replace {{potraitcoverurl}} or {{cta_image_url}} in CTA slide section
                 import re
-                cta_pattern = r'(<amp-story-page id="cta-slide"[^>]*>.*?<amp-img src=")\{\{potraitcoverurl\}\}'
+                # Replace both potraitcoverurl and cta_image_url placeholders
+                cta_pattern = r'(<amp-story-page id="cta-slide"[^>]*>.*?<amp-img src=")\{\{(?:potraitcoverurl|cta_image_url)\}\}'
                 replacement = r'\1{{cta_image_url}}'
                 template_html = re.sub(cta_pattern, replacement, template_html, flags=re.DOTALL)
                 placeholders["cta_image_url"] = cta_image_url
-                self._logger.info("Set CTA slide to use last slide's AI image: %s", cta_image_url[:80])
+                self._logger.info("✅ CTA image placeholder set: %s", cta_image_url[:80])
+            else:
+                self._logger.warning("⚠️ Could not find CTA image for %s mode", record.mode.value)
 
         # 3. Replace basic placeholders
         filled_html = self._replace_placeholders(template_html, placeholders)
@@ -700,11 +742,9 @@ class HTMLTemplateRenderer:
         image_source: Optional[str] = None,
     ) -> str:
         """Generate slides based on slide_count using template-specific generator."""
-        # For curious-template-1, it's a fixed 7-slide template, so don't generate dynamic slides
-        if record.mode == Mode.CURIOUS and template_key == "curious-template-1":
-            self._logger.info("curious-template-1 is a fixed template with all slides, skipping dynamic slide generation")
-            return ""  # Return empty - template already has all slides hardcoded
-        
+        # Generate slides dynamically based on slide_count for all templates
+        self._logger.info("Generating slides for mode=%s, template=%s, slide_count=%d, available_slides=%d", 
+                         record.mode.value, template_key, record.slide_count, len(record.slide_deck.slides))
         slides = []
         default_bg = "https://media.suvichaar.org/upload/polaris/polarisslide.png"
 

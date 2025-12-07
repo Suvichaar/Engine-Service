@@ -303,7 +303,7 @@ if st.session_state.last_mode != mode:
     # st.rerun()  # Now safe to call outside form
 
 # Get slide count from session state or use default (needed for image upload widget)
-default_slide_count = 4 if mode == "news" else 7
+default_slide_count = 4 if mode == "news" else 4
 slide_count_for_images = st.session_state.get("slide_count", default_slide_count)
 
 # Initialize variables for both modes (will be set below)
@@ -311,7 +311,7 @@ image_source = None
 prompt_keywords = None
 uploaded_background_images = []
 
-# Image Source Selection (outside form for News mode to allow dynamic updates)
+# Image Source Selection (outside form for both modes to allow dynamic updates)
 if mode == "news":
     st.markdown("### 🖼️ Background Image Settings")
     st.caption("These images are used as slide backgrounds (not for content extraction)")
@@ -371,7 +371,70 @@ if mode == "news":
                         caption += " (will be ignored)"
                     st.image(img, caption=caption, use_container_width=True)
             st.info("ℹ️ Images will be uploaded to S3 in portrait size (720x1280) and used as slide backgrounds")
-# Curious mode image source is handled inside form (below)
+elif mode == "curious":
+    # Curious mode image source selection (outside form for dynamic updates)
+    st.markdown("### 🖼️ Background Image Settings")
+    st.caption("These images are used as slide backgrounds (not for content extraction)")
+    
+    image_source_radio = st.radio(
+        "Image Source",
+        options=["ai", "pexels", "custom"],
+        format_func=lambda x: {
+            "ai": "AI Generated",
+            "pexels": "Pexels Stock Images",
+            "custom": "Custom Images"
+        }[x],
+        help="Curious mode: AI generated, Pexels stock images, or custom uploaded images",
+        key="curious_image_source_radio"
+    )
+    
+    image_source = image_source_radio
+    
+    # Prompt Keywords for AI/Pexels (Curious mode) - show when AI or Pexels is selected
+    prompt_keywords = None
+    if image_source in ["ai", "pexels"]:
+        prompt_keywords_input = st.text_input(
+            "Prompt Keywords (comma-separated)",
+            placeholder="quantum, computing, science, technology",
+            help="Keywords for AI image generation or Pexels search (Curious mode only)",
+            key="curious_prompt_keywords"
+        )
+        prompt_keywords = [k.strip() for k in prompt_keywords_input.split(",") if k.strip()] if prompt_keywords_input else []
+    
+    # Custom Images Upload for Curious - show when custom is selected
+    uploaded_background_images = []
+    if image_source == "custom":
+        st.caption(f"📸 Upload up to {slide_count_for_images} images (one for each slide background)")
+        uploaded_background_images = st.file_uploader(
+            "Upload Background Images",
+            type=["jpg", "jpeg", "png", "webp"],
+            accept_multiple_files=True,
+            help=f"Upload up to {slide_count_for_images} custom images for slide backgrounds (will be resized to 720x1280 portrait)",
+            key="curious_custom_images"
+        )
+        if uploaded_background_images:
+            if len(uploaded_background_images) != slide_count_for_images:
+                if len(uploaded_background_images) > slide_count_for_images:
+                    st.warning(f"⚠️ You uploaded {len(uploaded_background_images)} images for {slide_count_for_images} slides. Extra images will be ignored.")
+                else:
+                    st.warning(f"⚠️ You uploaded {len(uploaded_background_images)} images for {slide_count_for_images} slides. The last image will be repeated for remaining slides.")
+            else:
+                st.success(f"✅ {len(uploaded_background_images)} images uploaded")
+            
+            # Show preview (all uploaded images)
+            cols = st.columns(min(3, len(uploaded_background_images)))
+            for idx, img in enumerate(uploaded_background_images):
+                with cols[idx % 3]:
+                    caption = f"Slide {idx+1}"
+                    if idx >= slide_count_for_images:
+                        caption += " (will be ignored)"
+                    st.image(img, caption=caption, use_container_width=True)
+            st.info("ℹ️ Images will be uploaded to S3 in portrait size (720x1280) and used as slide backgrounds")
+else:
+    # Fallback (should not happen)
+    image_source = None
+    prompt_keywords = None
+    uploaded_background_images = []
 
 with st.form("story_form", clear_on_submit=False):
     
@@ -387,15 +450,15 @@ with st.form("story_form", clear_on_submit=False):
         default_slide_count = 4
         slide_count_range = (4, 10)
     else:  # curious
-        template_options = ["curious-template-1", "template-v19"]
+        template_options = ["curious-template-1", "curious-template-2", "template-v19"]
         template_key = st.selectbox(
             "Template",
             options=template_options,
-            help="Select template for Curious mode",
+            help="Select template for Curious mode (curious-template-2 supports dynamic slide count)",
             key="template_select_curious"
         )
-        default_slide_count = 7
-        slide_count_range = (7, 15)
+        default_slide_count = 4
+        slide_count_range = (4, 15)
     
     # Slide Count
     slide_count = st.number_input(
@@ -459,53 +522,8 @@ with st.form("story_form", clear_on_submit=False):
             help="Upload images or documents for content extraction. These will be processed via OCR to extract text content."
         )
     
-    # Image Source for News mode is handled outside form (above)
-    # For News mode, use variables from outside form
-    # For Curious mode, handle inside form
-    if mode == "curious":
-        image_source = st.radio(
-            "Image Source",
-            options=["ai", "pexels", "custom"],
-            help="Curious mode: AI generated, Pexels stock images, or custom uploaded images"
-        )
-        
-        # Prompt Keywords for AI/Pexels
-        prompt_keywords = None
-        if image_source in ["ai", "pexels"]:
-            prompt_keywords_input = st.text_input(
-                "Prompt Keywords (comma-separated)",
-                help="Keywords for AI image generation or Pexels search (Curious mode only)"
-            )
-            prompt_keywords = [k.strip() for k in prompt_keywords_input.split(",") if k.strip()] if prompt_keywords_input else []
-        
-        # Custom Images Upload for Curious (multiple images based on slide_count)
-        uploaded_background_images = []
-        if image_source == "custom":
-            st.caption(f"📸 Upload exactly {slide_count} images (one for each slide background)")
-            uploaded_background_images = st.file_uploader(
-                "Upload Background Images",
-                type=["jpg", "jpeg", "png", "webp"],
-                accept_multiple_files=True,
-                help=f"Upload {slide_count} custom images for slide backgrounds (will be resized to 720x1280 portrait)"
-            )
-            if uploaded_background_images:
-                if len(uploaded_background_images) != slide_count:
-                    if len(uploaded_background_images) > slide_count:
-                        st.warning(f"⚠️ You uploaded {len(uploaded_background_images)} images for {slide_count} slides. Extra images will be ignored.")
-                    else:
-                        st.warning(f"⚠️ You uploaded {len(uploaded_background_images)} images for {slide_count} slides. The last image will be repeated for remaining slides.")
-                else:
-                    st.success(f"✅ {len(uploaded_background_images)} images uploaded")
-                
-                # Show preview (all uploaded images)
-                cols = st.columns(min(3, len(uploaded_background_images)))
-                for idx, img in enumerate(uploaded_background_images):
-                    with cols[idx % 3]:
-                        caption = f"Slide {idx+1}"
-                        if idx >= slide_count:
-                            caption += " (will be ignored)"
-                        st.image(img, caption=caption, use_container_width=True)
-                st.info("ℹ️ Images will be uploaded to S3 in portrait size (720x1280) and used as slide backgrounds")
+    # Image Source for both News and Curious modes is handled outside form (above)
+    # Use variables from outside form for both modes
     
     # Voice Engine
     st.markdown("### 🎤 Voice Settings")

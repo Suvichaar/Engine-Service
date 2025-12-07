@@ -105,10 +105,54 @@ class TestNews2SlideGenerator:
         """
 
 
+class CuriousTemplate2SlideGenerator:
+    """Generator for curious-template-2 template (dynamic slide generation)."""
+
+    def generate_slide(
+        self,
+        paragraph: str,
+        audio_url: str,
+        background_image_url: Optional[str] = None,
+        slide_id: str = "slide",
+    ) -> str:
+        """Generate AMP slide for curious-template-2 template."""
+        # Default background image if none provided
+        if not background_image_url:
+            background_image_url = "https://media.suvichaar.org/upload/polaris/polarisslide.png"
+
+        # Escape HTML in paragraph
+        paragraph_escaped = paragraph.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+        return f"""
+      <amp-story-page id="{slide_id}" auto-advance-after="{slide_id}-audio">
+        <amp-story-grid-layer template="fill">
+          <amp-img src="{background_image_url}"
+            width="720" height="1280" layout="responsive">
+          </amp-img>
+        </amp-story-grid-layer>
+        <amp-story-grid-layer template="fill">
+          <amp-video autoplay loop layout="fixed" width="1" height="1" poster="" id="{slide_id}-audio">
+            <source type="audio/mpeg" src="{audio_url}">
+          </amp-video>
+        </amp-story-grid-layer>
+        <amp-story-grid-layer template="vertical">
+          <div class="centered-container">
+            <div class="header">📘 Notes Chapter</div>
+            <div class="text1">
+              {paragraph_escaped}
+            </div>
+           <div class="footer"><p>&copy;ABC Classes</p></div>
+          </div>
+        </amp-story-grid-layer>
+      </amp-story-page>
+        """
+
+
 # Template Registry
 TEMPLATE_GENERATORS: dict[str, TemplateSlideGenerator] = {
     "test-news-1": TestNews1SlideGenerator(),
     "test-news-2": TestNews2SlideGenerator(),
+    "curious-template-2": CuriousTemplate2SlideGenerator(),
 }
 
 

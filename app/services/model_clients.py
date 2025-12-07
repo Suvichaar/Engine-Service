@@ -87,9 +87,18 @@ class CuriousModelClient(ModelClient):
         target_lang = language.split("-")[0] if "-" in language else language
         
         # Calculate middle slides count (slide_count - 1 cover - 1 CTA = middle slides)
-        # For curious-template-1: slide_count=7 means 1 cover + 5 middle + 1 CTA = 7
+        # Example: slide_count=4 means 1 cover + 2 middle + 1 CTA = 4
+        # Example: slide_count=7 means 1 cover + 5 middle + 1 CTA = 7
         # So middle_count = slide_count - 2
-        middle_count = max(1, slide_count - 2) if slide_count else 6
+        # Ensure at least 1 middle slide, but respect the requested slide_count
+        import logging
+        logger = logging.getLogger(__name__)
+        if slide_count:
+            middle_count = max(1, slide_count - 2)  # At least 1 middle slide, but respect slide_count
+            logger.info(f"Curious mode: slide_count={slide_count}, calculating middle_count={middle_count} (1 cover + {middle_count} middle + 1 CTA = {1 + middle_count + 1} total)")
+        else:
+            middle_count = 6  # Default fallback (for backward compatibility)
+            logger.warning("Curious mode: slide_count not provided, using default middle_count=6")
         
         # Generate structured JSON
         result_json = self._generate_structured_json(source_text, target_lang, middle_count, prompt)
