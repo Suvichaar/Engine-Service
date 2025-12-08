@@ -233,8 +233,31 @@ def get_story_html(story_id: str, base_url: str = None) -> str:
 st.set_page_config(
     page_title="Story Generator",
     page_icon="📰",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"  # Keep sidebar open by default
 )
+
+# Fix for sidebar toggle button showing text instead of icon
+st.markdown("""
+<style>
+    /* Hide the broken sidebar toggle button text */
+    button[kind="header"] {
+        display: none !important;
+    }
+    
+    /* Hide any text in the header button area */
+    [data-testid="stHeader"] button[title*="sidebar"],
+    [data-testid="stHeader"] button[aria-label*="sidebar"] {
+        font-size: 0 !important;
+        color: transparent !important;
+    }
+    
+    /* Alternative: Completely hide the toggle if not needed */
+    .css-1d391kg {
+        display: none !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 st.title("📰 Story Generator")
 st.markdown("Create web stories using FastAPI backend")
