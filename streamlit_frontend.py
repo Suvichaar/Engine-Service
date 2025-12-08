@@ -25,9 +25,9 @@ except ImportError:
 # =========================
 # Get FastAPI URL from secrets or environment variable or use default
 try:
-    FASTAPI_BASE_URL = st.secrets.get("fastapi", {}).get("BASE_URL", "http://localhost:8000")
+    FASTAPI_BASE_URL = st.secrets.get("fastapi", {}).get("BASE_URL", "https://newslab-engine-service.whiteisland-424148cf.centralindia.azurecontainerapps.io")
 except:
-    FASTAPI_BASE_URL = os.getenv("FASTAPI_BASE_URL", "http://localhost:8000")
+    FASTAPI_BASE_URL = os.getenv("FASTAPI_BASE_URL", "https://newslab-engine-service.whiteisland-424148cf.centralindia.azurecontainerapps.io")
 
 # Get AWS credentials from secrets, environment, or settings.toml
 # Images go to suvichaarapp bucket, HTML goes to suvichaarstories bucket
