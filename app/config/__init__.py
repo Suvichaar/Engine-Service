@@ -27,8 +27,8 @@ class AzureAPISettings(BaseModel):
 
 
 class DalleSettings(BaseModel):
-    endpoint: str
-    api_key: str
+    endpoint: str = ""  # Optional - ai_image is used instead for image generation
+    api_key: str = ""   # Optional - ai_image is used instead for image generation
 
 
 class AzureSpeechSettings(BaseModel):
@@ -48,11 +48,11 @@ class AWSSettings(BaseModel):
     region: str
     bucket: str
     s3_prefix: str
-    html_s3_prefix: str
+    html_s3_prefix: str = ""  # Default empty string - HTML files go to bucket root
     cdn_prefix_media: str
     cdn_html_base: str
     cdn_base: str
-    default_error_image: str
+    default_error_image: str = "https://media.suvichaar.org/default-error.jpg"  # Default error image URL
 
 
 class AIImageSettings(BaseModel):
@@ -90,7 +90,7 @@ class DatabaseSettings(BaseModel):
 
 class AppSettings(BaseModel):
     azure_api: AzureAPISettings
-    dalle: DalleSettings
+    dalle: DalleSettings = DalleSettings()  # Optional with defaults - ai_image is preferred
     azure_speech: AzureSpeechSettings
     azure_di: AzureDocumentIntelligenceSettings
     aws: AWSSettings
@@ -111,66 +111,86 @@ def _load_toml(path: Path) -> Dict[str, Any]:
 
 
 def _env_override() -> Dict[str, Any]:
+    """Get environment variable with fallback to Azure Container Apps format.
+    
+    Azure Container Apps requires environment variable names to be lowercase
+    alphanumeric with hyphens. This function tries the original format first,
+    then falls back to the Azure-compatible format.
+    """
+    def get_env_with_fallback(env_name: str) -> str | None:
+        # Try original format first (uppercase with underscores)
+        value = os.getenv(env_name)
+        if value is not None:
+            return value
+        # Try Azure-compatible format (lowercase with hyphens)
+        azure_name = env_name.lower().replace("_", "-")
+        value = os.getenv(azure_name)
+        return value
+    
     mapping = {
         "azure_api": {
-            "endpoint": os.getenv("AZURE_OPENAI_ENDPOINT"),
-            "api_key": os.getenv("AZURE_OPENAI_API_KEY"),
-            "deployment": os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-            "api_version": os.getenv("AZURE_OPENAI_API_VERSION"),
+            "endpoint": get_env_with_fallback("AZURE_OPENAI_ENDPOINT"),
+            "api_key": get_env_with_fallback("AZURE_OPENAI_API_KEY"),
+            "deployment": get_env_with_fallback("AZURE_OPENAI_DEPLOYMENT"),
+            "api_version": get_env_with_fallback("AZURE_OPENAI_API_VERSION"),
         },
         "dalle": {
-            "endpoint": os.getenv("DALL_E_ENDPOINT"),
-            "api_key": os.getenv("DALL_E_KEY"),
+            "endpoint": get_env_with_fallback("DALL_E_ENDPOINT"),
+            "api_key": get_env_with_fallback("DALL_E_KEY"),
         },
         "azure_speech": {
-            "api_key": os.getenv("AZURE_SPEECH_KEY"),
-            "region": os.getenv("AZURE_SPEECH_REGION"),
-            "voice_name": os.getenv("VOICE_NAME"),
+            "api_key": get_env_with_fallback("AZURE_SPEECH_KEY"),
+            "region": get_env_with_fallback("AZURE_SPEECH_REGION"),
+            "voice_name": get_env_with_fallback("VOICE_NAME"),
         },
         "azure_di": {
-            "endpoint": os.getenv("AZURE_DI_ENDPOINT"),
-            "api_key": os.getenv("AZURE_DI_KEY"),
+            "endpoint": get_env_with_fallback("AZURE_DI_ENDPOINT"),
+            "api_key": get_env_with_fallback("AZURE_DI_KEY"),
         },
         "aws": {
-            "access_key": os.getenv("AWS_ACCESS_KEY"),
-            "secret_key": os.getenv("AWS_SECRET_KEY"),
-            "region": os.getenv("AWS_REGION"),
-            "bucket": os.getenv("AWS_BUCKET"),
-            "s3_prefix": os.getenv("S3_PREFIX"),
-            "html_s3_prefix": os.getenv("HTML_S3_PREFIX"),
-            "cdn_prefix_media": os.getenv("CDN_PREFIX_MEDIA"),
-            "cdn_html_base": os.getenv("CDN_HTML_BASE"),
-            "cdn_base": os.getenv("CDN_BASE"),
-            "default_error_image": os.getenv("DEFAULT_ERROR_IMAGE"),
+            "access_key": get_env_with_fallback("AWS_ACCESS_KEY"),
+            "secret_key": get_env_with_fallback("AWS_SECRET_KEY"),
+            "region": get_env_with_fallback("AWS_REGION"),
+            "bucket": get_env_with_fallback("AWS_BUCKET"),
+            "s3_prefix": get_env_with_fallback("S3_PREFIX"),
+            "html_s3_prefix": get_env_with_fallback("HTML_S3_PREFIX"),
+            "cdn_prefix_media": get_env_with_fallback("CDN_PREFIX_MEDIA"),
+            "cdn_html_base": get_env_with_fallback("CDN_HTML_BASE"),
+            "cdn_base": get_env_with_fallback("CDN_BASE"),
+            "default_error_image": get_env_with_fallback("DEFAULT_ERROR_IMAGE"),
         },
         "ai_image": {
-            "endpoint": os.getenv("AI_IMAGE_ENDPOINT"),
-            "api_key": os.getenv("AI_IMAGE_API_KEY"),
+            "endpoint": get_env_with_fallback("AI_IMAGE_ENDPOINT"),
+            "api_key": get_env_with_fallback("AI_IMAGE_API_KEY"),
         },
-        "pexels": {"api_key": os.getenv("PEXELS_API_KEY")},
-        "image_processing": {"resize_variants": os.getenv("RESIZE_VARIANTS")},
+        "pexels": {"api_key": get_env_with_fallback("PEXELS_API_KEY")},
+        "image_processing": {"resize_variants": get_env_with_fallback("RESIZE_VARIANTS")},
         "elevenlabs": {
-            "api_key": os.getenv("ELEVENLABS_API_KEY"),
-            "voice_id": os.getenv("ELEVENLABS_VOICE_ID"),
+            "api_key": get_env_with_fallback("ELEVENLABS_API_KEY"),
+            "voice_id": get_env_with_fallback("ELEVENLABS_VOICE_ID"),
         },
         "azure_voice": {
-            "speech_key": os.getenv("AZURE_SPEECH_KEY"),
-            "region": os.getenv("AZURE_SPEECH_REGION"),
-            "voice": os.getenv("AZURE_SPEECH_VOICE"),
+            "speech_key": get_env_with_fallback("AZURE_SPEECH_KEY"),
+            "region": get_env_with_fallback("AZURE_SPEECH_REGION"),
+            "voice": get_env_with_fallback("AZURE_SPEECH_VOICE"),
         },
         "voice_storage": {
-            "bucket": os.getenv("VOICE_BUCKET"),
-            "prefix": os.getenv("VOICE_PREFIX"),
+            "bucket": get_env_with_fallback("VOICE_BUCKET"),
+            "prefix": get_env_with_fallback("VOICE_PREFIX"),
         },
         "database": {
-            "url": os.getenv("DATABASE_URL"),
+            "url": get_env_with_fallback("DATABASE_URL"),
         },
     }
-    return {
-        section: {k: v for k, v in values.items() if v is not None}
-        for section, values in mapping.items()
-        if any(values.values())
-    }
+    # Filter out None values but keep empty strings (which are valid values)
+    # Also include sections that have at least one non-None value
+    result = {}
+    for section, values in mapping.items():
+        filtered_values = {k: v for k, v in values.items() if v is not None}
+        # Include section if it has any values (even empty strings are valid)
+        if filtered_values:
+            result[section] = filtered_values
+    return result
 
 
 def _deep_merge(base: MutableMapping[str, Any], overrides: Mapping[str, Any]) -> MutableMapping[str, Any]:
