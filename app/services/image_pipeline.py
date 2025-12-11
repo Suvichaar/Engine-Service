@@ -201,21 +201,21 @@ class AIImageProvider:
         # Use very simple, generic prompts that are guaranteed to pass content filters
         # Different prompts for different slide positions to ensure variety
         simple_safe_prompts = [
-            "professional news anchor in modern studio",
-            "newsroom with journalists working on computers",
-            "news headline displayed on digital screen",
-            "journalist holding microphone in professional setting",
-            "modern news broadcast studio with cameras",
-            "news article layout with clean typography",
-            "professional media team in modern office",
-            "news reporting equipment on desk",
-            "journalism workspace with modern technology",
-            "professional news media environment",
-            "breaking news display on television screen",
-            "news conference room with presentation screen",
-            "modern news desk with multiple monitors",
-            "journalist writing article on laptop",
-            "news broadcast control room with equipment"
+            "abstract geometric shapes in blue and white",
+            "modern minimalist design with soft colors",
+            "professional business illustration",
+            "clean abstract composition with warm tones",
+            "contemporary design elements in neutral colors",
+            "simple geometric patterns in pastel colors",
+            "minimalist abstract art with professional aesthetic",
+            "modern design with clean lines and soft lighting",
+            "abstract composition with vibrant but safe colors",
+            "professional graphic design with geometric elements",
+            "contemporary illustration with positive energy",
+            "clean modern aesthetic with balanced composition",
+            "abstract visual design with professional quality",
+            "minimalist art with contemporary style",
+            "simple geometric design with harmonious colors"
         ]
         
         # Use slide_index to select different prompts for different slides
@@ -587,11 +587,11 @@ class AIImageProvider:
                         elif attempt == 1:
                             # Second retry: use very simple generic prompt
                             logger.warning("Content policy violation still occurring (attempt %d/%d), using very simple generic prompt", attempt + 1, retry_count)
-                            body["prompt"] = "professional news illustration, clean, modern, positive"
+                            body["prompt"] = "abstract geometric design, clean, modern, professional"
                         else:
                             # Last retry: use minimal prompt
                             logger.warning("Content policy violation persists (attempt %d/%d), using minimal safe prompt", attempt + 1, retry_count)
-                            body["prompt"] = "professional news media"
+                            body["prompt"] = "abstract design"
                     else:
                         # For other 400 errors, try with a simpler prompt
                         logger.warning("400 Bad Request on attempt %d/%d, trying simpler prompt", attempt + 1, retry_count)

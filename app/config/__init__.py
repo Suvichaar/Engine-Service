@@ -287,6 +287,52 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
     data: Dict[str, Any] = _normalize_config(_load_toml(path))
     overrides = _env_override()
     merged = _deep_merge(data, overrides)
+    
+    # Ensure fields with defaults are present if their parent section exists
+    # This is needed because Pydantic defaults only work when field is completely absent,
+    # not when parent dict exists but field is missing
+    if "aws" in merged and isinstance(merged["aws"], dict):
+        aws_dict = merged["aws"]
+        if "html_s3_prefix" not in aws_dict:
+            aws_dict["html_s3_prefix"] = ""
+        if "default_error_image" not in aws_dict:
+            aws_dict["default_error_image"] = "https://media.suvichaar.org/default-error.jpg"
+    
+    # Ensure dalle section has defaults if missing
+    if "dalle" not in merged:
+        merged["dalle"] = {"endpoint": "", "api_key": ""}
+    elif isinstance(merged.get("dalle"), dict):
+        dalle_dict = merged["dalle"]
+        if "endpoint" not in dalle_dict:
+            dalle_dict["endpoint"] = ""
+        if "api_key" not in dalle_dict:
+            dalle_dict["api_key"] = ""
+    
+    # Ensure ai_image section exists - IMPORTANT for AIImageProvider initialization
+    # This ensures settings.ai_image is never None, even if environment variables are missing
+    if "ai_image" not in merged:
+        merged["ai_image"] = {"endpoint": "", "api_key": ""}
+    elif isinstance(merged.get("ai_image"), dict):
+        ai_image_dict = merged["ai_image"]
+        if "endpoint" not in ai_image_dict:
+            ai_image_dict["endpoint"] = ""
+        if "api_key" not in ai_image_dict:
+            ai_image_dict["api_key"] = ""
+    
+    # Note: ai_image endpoint and api_key should be set via environment variables
+    # In Azure Container Apps, set: AI_IMAGE_ENDPOINT and AI_IMAGE_API_KEY
+    
+    # Ensure pexels section exists - IMPORTANT for PexelsImageProvider initialization
+    if "pexels" not in merged:
+        merged["pexels"] = {"api_key": ""}
+    elif isinstance(merged.get("pexels"), dict):
+        pexels_dict = merged["pexels"]
+        if "api_key" not in pexels_dict:
+            pexels_dict["api_key"] = ""
+    
+    # Note: Pexels API key should be set via environment variable
+    # In Azure Container Apps, set: PEXELS_API_KEY or pexels-api-key
+    
     return AppSettings(**merged)
 
 
