@@ -341,17 +341,18 @@ if mode == "news":
     
     image_source_radio = st.radio(
         "Image Source",
-        options=["default", "ai", "custom"],
+        options=["default", "ai", "pexels", "custom"],
         format_func=lambda x: {
             "default": "Default Images",
-            "ai": "AI Generated", 
+            "ai": "AI Generated",
+            "pexels": "Pexels Stock Images",
             "custom": "Custom Images"
         }[x],
-        help="News mode: Default polaris images, AI generated images, or custom uploads",
+        help="News mode: Default polaris images, AI generated images, Pexels stock images, or custom uploads",
         key="news_image_source_radio"
     )
     
-    # Prompt Keywords for AI (News mode) - show when AI is selected
+    # Prompt Keywords for AI and Pexels (News mode) - show when AI or Pexels is selected
     prompt_keywords = None
     if image_source_radio == "ai":
         prompt_keywords_input = st.text_input(
@@ -359,6 +360,14 @@ if mode == "news":
             placeholder="news, breaking, journalism, media, technology",
             help="Keywords for AI image generation in News mode",
             key="news_prompt_keywords"
+        )
+        prompt_keywords = [k.strip() for k in prompt_keywords_input.split(",") if k.strip()] if prompt_keywords_input else []
+    elif image_source_radio == "pexels":
+        prompt_keywords_input = st.text_input(
+            "Search Keywords (comma-separated)",
+            placeholder="news, breaking, journalism, media, technology",
+            help="Keywords for Pexels image search in News mode",
+            key="news_pexels_keywords"
         )
         prompt_keywords = [k.strip() for k in prompt_keywords_input.split(",") if k.strip()] if prompt_keywords_input else []
     
