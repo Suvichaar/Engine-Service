@@ -25,9 +25,9 @@ except ImportError:
 # =========================
 # Get FastAPI URL from secrets or environment variable or use default
 try:
-    FASTAPI_BASE_URL = st.secrets.get("fastapi", {}).get("BASE_URL", "https://newslab-engine-service.whiteisland-424148cf.centralindia.azurecontainerapps.io")
+    FASTAPI_BASE_URL = st.secrets.get("fastapi", {}).get("BASE_URL", "https://localhost:8000")
 except:
-    FASTAPI_BASE_URL = os.getenv("FASTAPI_BASE_URL", "https://newslab-engine-service.whiteisland-424148cf.centralindia.azurecontainerapps.io")
+    FASTAPI_BASE_URL = os.getenv("FASTAPI_BASE_URL", "https://https://localhost:8000")
 
 # Get AWS credentials from secrets, environment, or settings.toml
 # Images go to suvichaarapp bucket, HTML goes to suvichaarstories bucket
@@ -560,8 +560,12 @@ with st.form("story_form", clear_on_submit=False):
     # Voice Engine
     st.markdown("### 🎤 Voice Settings")
     voice_engine = st.selectbox(
-        "Voice Engine",
+        "Use Elevenlabs",
         options=["azure_basic", "elevenlabs_pro"],
+        format_func=lambda x: {
+            "azure_basic": "Use Azure",
+            "elevenlabs_pro": "Use Elevenlabs"
+        }[x],
         help="Text-to-speech engine for narration"
     )
     

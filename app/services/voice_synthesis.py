@@ -51,8 +51,11 @@ class DefaultVoiceSynthesisService(VoiceSynthesisService):
         self._storage = storage
 
     def synthesize(self, deck: SlideDeck, language: LanguageMetadata, provider: str) -> list[VoiceAsset]:
+        logger = logging.getLogger(__name__)
         voice_provider = self._resolve_provider(provider)
         if voice_provider is None:
+            logger.warning("No voice provider found for id=%s; available providers=%s",
+                           provider, [getattr(p, 'name', type(p).__name__) for p in self._providers])
             return []
 
         # Generate separate audio for each slide (not combined)
@@ -90,7 +93,11 @@ class ElevenLabsClient:
         self._voice_id = voice_id
 
     def supports(self, provider_id: str) -> bool:
-        return provider_id == self.name
+        match = provider_id == self.name
+        logging.getLogger(__name__).warning(
+            "ElevenLabsClient.supports(%s) -> %s (name=%s)", provider_id, match, self.name
+        )
+        return match
 
     def synthesize(self, text: str, *, language: str) -> VoiceGenerationResult:
         headers = {

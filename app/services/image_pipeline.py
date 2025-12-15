@@ -94,10 +94,11 @@ class AIImageProvider:
     _last_request_time = None
     _min_cooldown_seconds = 5.0  # Minimum 5 seconds between requests
 
-    def __init__(self, endpoint: str, api_key: str, cooldown_seconds: float = 5.0) -> None:
+    def __init__(self, endpoint: str, api_key: str, cooldown_seconds: float = 5.0, language_model=None) -> None:
         self._endpoint = endpoint
         self._api_key = api_key
         self._min_cooldown_seconds = cooldown_seconds  # Configurable cooldown
+        self._language_model = language_model  # For automatic alt_text generation
 
     def supports(self, payload: IntakePayload) -> bool:
         result = payload.image_source == "ai"
@@ -248,6 +249,75 @@ class AIImageProvider:
         # Don't add topic if it might cause issues - keep it very simple
         return f"{base_prompt}, {variation}, professional, clean, modern, positive, informative, high quality"
 
+    def _generate_alt_texts_for_slides(self, slides, payload) -> dict[int, str]:
+        """Generate alt_texts automatically from slide content using LLM if available.
+        
+        Args:
+            slides: List of slides to generate alt_texts for
+            payload: IntakePayload with mode and category info
+            
+        Returns:
+            Dictionary mapping slide index to alt_text
+        """
+        alt_texts = {}
+        logger = logging.getLogger(__name__)
+        
+        if not self._language_model:
+            logger.debug("Language model not available, skipping automatic alt_text generation")
+            return alt_texts
+        
+        logger.info(f"🔄 Generating alt_texts automatically for {len(slides)} slides using LLM...")
+        
+        for idx, slide in enumerate(slides):
+            try:
+                # Generate alt_text from slide content
+                system_prompt = """You are an expert at creating visual image prompts for AI image generation. 
+Generate concise, descriptive alt text (image prompts) that are:
+- Visual and descriptive (1-2 sentences)
+- Suitable for AI image generation (DALL-E 3)
+- Focus on visual elements, colors, style, composition
+- Safe, positive, and family-friendly
+- No text, logos, or watermarks mentioned
+- Professional and modern aesthetic"""
+                
+                mode_context = "educational story" if payload.mode.value == "curious" else "news story"
+                category_context = f"Category: {payload.category}" if payload.category else ""
+                
+                user_prompt = f"""Generate a descriptive image prompt (alt text) for this slide content.
+
+Slide Content: {slide.text or 'Visual concept'}
+Mode: {mode_context}
+{category_context}
+
+Requirements:
+- Descriptive and visual (1-2 sentences max)
+- Suitable for AI image generation
+- Focus on visual elements, colors, style
+- Safe, positive, family-friendly
+- Professional and modern
+
+Alt Text:"""
+                
+                alt_text = self._language_model.complete(system_prompt, user_prompt)
+                # Clean up the response
+                alt_text = alt_text.strip().strip('"').strip("'").strip()
+                
+                if alt_text:
+                    alt_texts[idx] = alt_text
+                    logger.info(f"✅ Generated alt_text for slide {idx}: {alt_text[:80]}...")
+                else:
+                    # Fallback to slide text
+                    alt_texts[idx] = slide.text or "Visual concept"
+                    logger.warning(f"⚠️ Empty alt_text generated for slide {idx}, using slide text as fallback")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to generate alt_text for slide {idx}: {e}, using slide text as fallback")
+                # Fallback to slide text
+                alt_texts[idx] = slide.text or "Visual concept"
+        
+        logger.info(f"✅ Generated {len(alt_texts)} alt_texts automatically")
+        return alt_texts
+
     def generate(self, deck: SlideDeck, payload: IntakePayload) -> Sequence[ImageContent]:
         contents: list[ImageContent] = []
         prompt_keywords = ", ".join(payload.prompt_keywords) or "story"
@@ -387,6 +457,17 @@ class AIImageProvider:
                 else:
                     logger.warning("Payload metadata is empty or None for Curious mode")
             
+            # If alt_texts not found (for both News and Curious modes), generate them automatically
+            # BUT: Only if user hasn't provided prompt_keywords (user input takes priority)
+            if not alt_texts and self._language_model:
+                # Check if user provided prompt_keywords - if yes, we'll use them in prompts instead
+                user_provided_keywords = payload.prompt_keywords and len(payload.prompt_keywords) > 0
+                if not user_provided_keywords:
+                    logger.info("🔄 Alt texts not found in narrative_json and no user keywords provided, generating automatically from slide content...")
+                    alt_texts = self._generate_alt_texts_for_slides(deck.slides, payload)
+                else:
+                    logger.info("📝 User provided prompt_keywords, will use them in prompts instead of auto-generated alt_texts")
+            
             # Generate images for all slides in the deck (including cover and CTA)
             import time
             last_successful_image = None  # Track for fallback
@@ -409,21 +490,39 @@ class AIImageProvider:
                     logger.info(f"⏳ Waiting {delay:.1f} seconds before generating image for slide {idx} (rate limit protection)...")
                     time.sleep(delay)
                 
-                # For Curious mode, prioritize alt text from narrative JSON
-                if payload.mode.value == "curious":
-                    if idx in alt_texts and alt_texts[idx]:
-                        prompt = alt_texts[idx]
-                        logger.info(f"✅ Using alt text for slide {idx} ({slide.placeholder_id}): {prompt[:100]}...")
+                # Priority order:
+                # 1. User-provided prompt_keywords (if available) - user input takes priority
+                # 2. Auto-generated alt_texts (if available)
+                # 3. Fallback to slide.text + prompt_keywords
+                
+                user_provided_keywords = payload.prompt_keywords and len(payload.prompt_keywords) > 0
+                
+                if user_provided_keywords:
+                    # User provided keywords - use them in prompt (user preference)
+                    if payload.mode.value == "curious":
+                        if idx == 0:
+                            prompt = f"Cover for educational story: {slide.text or 'Learning'} — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette; inclusive, family-friendly; no text/logos/watermarks; no real-person likeness. | keywords: {prompt_keywords}"
+                        else:
+                            prompt = f"{slide.text or 'Visual concept'} — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette; inclusive, family-friendly; no text/logos/watermarks; no real-person likeness. | keywords: {prompt_keywords}"
                     else:
-                        # Fallback: generate prompt from slide content
+                        # For News mode, use slide text with user keywords
+                        prompt = f"{slide.text or 'Visual concept'} | keywords: {prompt_keywords}"
+                    logger.info(f"📝 Using user-provided keywords for slide {idx} ({slide.placeholder_id}): {prompt_keywords}")
+                elif idx in alt_texts and alt_texts[idx]:
+                    # Auto-generated alt_texts available - use them
+                    prompt = alt_texts[idx]
+                    logger.info(f"✅ Using auto-generated alt text for slide {idx} ({slide.placeholder_id}): {prompt[:100]}...")
+                else:
+                    # Fallback: generate prompt from slide content
+                    if payload.mode.value == "curious":
                         if idx == 0:
                             prompt = f"Cover for educational story: {slide.text or 'Learning'} — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette; inclusive, family-friendly; no text/logos/watermarks; no real-person likeness."
                         else:
-                            prompt = f"{slide.text or 'Visual concept'} — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette; inclusive, family-friendly; no text/logos/watermarks; no real-person likeness. | keywords: {prompt_keywords}"
-                        logger.warning(f"⚠️ Alt text not found for slide {idx} ({slide.placeholder_id}), using fallback prompt")
-                else:
-                    # For other modes, use slide text with keywords
-                    prompt = f"{slide.text or 'Visual concept'} | keywords: {prompt_keywords}"
+                            prompt = f"{slide.text or 'Visual concept'} — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette; inclusive, family-friendly; no text/logos/watermarks; no real-person likeness."
+                    else:
+                        # For News mode, use slide text only (no keywords if not provided)
+                        prompt = f"{slide.text or 'Visual concept'}"
+                    logger.warning(f"⚠️ Alt text not found for slide {idx} ({slide.placeholder_id}), using fallback prompt")
                 
                 try:
                     logger.debug(f"🖼️ Generating image for slide {idx} with prompt: {prompt[:150]}...")
@@ -665,10 +764,60 @@ class PexelsImageProvider:
     def supports(self, payload: IntakePayload) -> bool:
         return payload.image_source == "pexels"
 
+    def _extract_keywords_from_text(self, text: str, max_keywords: int = 2) -> List[str]:
+        """Extract 1-2 main keywords from slide text for Pexels search.
+        
+        Args:
+            text: Slide text content
+            max_keywords: Maximum number of keywords to extract
+            
+        Returns:
+            List of keywords (1-2 words) for Pexels search
+        """
+        if not text:
+            return ["news"]  # Default fallback
+        
+        import re
+        
+        # Simple approach: Extract first 1-2 meaningful words
+        # Remove common stop words
+        stop_words = {
+            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by",
+            "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
+            "will", "would", "should", "could", "may", "might", "must", "can", "this", "that", "these", "those",
+            "it", "its", "they", "them", "their", "we", "our", "you", "your", "he", "she", "his", "her",
+            "from", "as", "if", "when", "where", "why", "how", "what", "which", "who", "whom", "whose"
+        }
+        
+        # Split text into words, remove punctuation, lowercase
+        words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
+        
+        # Filter out stop words and get unique words
+        keywords = [w for w in words if w not in stop_words]
+        
+        # Return first max_keywords or fallback
+        if keywords:
+            return keywords[:max_keywords]
+        else:
+            # Fallback: use first word from text (if available)
+            first_words = text.split()
+            if first_words:
+                # Take first word, remove punctuation, lowercase
+                first_word = re.sub(r'[^\w]', '', first_words[0].lower())
+                if first_word and len(first_word) >= 3:
+                    return [first_word]
+            return ["news"]  # Ultimate fallback
+
     def generate(self, deck: SlideDeck, payload: IntakePayload) -> Sequence[ImageContent]:
         contents: list[ImageContent] = []
-        query = payload.prompt_keywords[:1] or ["news"]
         logger = logging.getLogger(__name__)
+        
+        # Priority: User-provided prompt_keywords > Automatic extraction
+        user_provided_keywords = payload.prompt_keywords and len(payload.prompt_keywords) > 0
+        if user_provided_keywords:
+            logger.info(f"📝 User provided prompt_keywords: {payload.prompt_keywords}, will use them for Pexels search")
+        else:
+            logger.info("🔄 No user keywords provided, will extract keywords automatically from slide content")
         
         # For both News and Curious modes, generate different images for each slide
         if payload.slide_count:
@@ -680,7 +829,16 @@ class PexelsImageProvider:
                 cover_slide = deck.slides[0]
                 if not cover_slide.image_url:
                     try:
-                        contents.append(self._fetch_image(cover_slide.placeholder_id, query[0], image_number=0))
+                        # Priority: User keywords > Automatic extraction
+                        if user_provided_keywords:
+                            query = payload.prompt_keywords[0]
+                            logger.info(f"📝 Pexels cover: Using user-provided keyword: '{query}'")
+                        else:
+                            # Extract keywords from cover slide content automatically
+                            keywords = self._extract_keywords_from_text(cover_slide.text)
+                            query = keywords[0] if keywords else "news"
+                            logger.info(f"📸 Pexels cover: Extracted keywords '{keywords}' from slide text: {cover_slide.text[:50] if cover_slide.text else 'N/A'}...")
+                        contents.append(self._fetch_image(cover_slide.placeholder_id, query, image_number=0))
                         logger.info("✅ Generated Pexels cover image (index 0)")
                     except Exception as exc:
                         logger.warning("Pexels fetch failed for cover: %s", exc)
@@ -693,9 +851,20 @@ class PexelsImageProvider:
                 if slide.image_url:
                     continue
                 try:
+                    # Priority: User keywords > Automatic extraction
+                    if user_provided_keywords:
+                        # Use user keywords, but cycle through them for variety
+                        keyword_idx = (idx - 1) % len(payload.prompt_keywords)
+                        query = payload.prompt_keywords[keyword_idx]
+                        logger.info(f"📝 Pexels slide {idx}: Using user-provided keyword: '{query}'")
+                    else:
+                        # Extract keywords from slide content automatically
+                        keywords = self._extract_keywords_from_text(slide.text)
+                        query = keywords[0] if keywords else "news"
+                        logger.info(f"📸 Pexels slide {idx}: Extracted keywords '{keywords}' from slide text: {slide.text[:50] if slide.text else 'N/A'}...")
                     # Use different image_number for variety (idx = 1, 2, 3, etc.)
                     # This ensures each slide gets a different image from Pexels search results
-                    contents.append(self._fetch_image(slide.placeholder_id, query[0], image_number=idx))
+                    contents.append(self._fetch_image(slide.placeholder_id, query, image_number=idx))
                     logger.info("✅ Generated Pexels image for slide %d (index %d, image_number=%d)", idx + 1, idx, idx)
                 except Exception as exc:
                     logger.warning("Pexels fetch failed for slide %d: %s", idx, exc)
@@ -705,9 +874,23 @@ class PexelsImageProvider:
                 cta_placeholder_id = "cta-slide"
                 logger.info("🎯 Generating Pexels CTA slide image for Curious mode (placeholder: %s)", cta_placeholder_id)
                 try:
+                    # Priority: User keywords > Automatic extraction
+                    if user_provided_keywords:
+                        # Use last keyword from user list, or first if only one
+                        query = payload.prompt_keywords[-1] if len(payload.prompt_keywords) > 1 else payload.prompt_keywords[0]
+                        logger.info(f"📝 Pexels CTA: Using user-provided keyword: '{query}'")
+                    else:
+                        # Extract keywords from last slide or use category
+                        if deck.slides:
+                            last_slide = deck.slides[-1]
+                            keywords = self._extract_keywords_from_text(last_slide.text)
+                        else:
+                            keywords = [payload.category.lower()] if payload.category else ["news"]
+                        query = keywords[0] if keywords else "news"
+                        logger.info(f"📸 Pexels CTA: Extracted keywords '{keywords}' for CTA slide")
                     # Use a high image_number to get a different image for CTA
                     cta_image_number = len(deck.slides)  # Use deck.slides length to ensure unique image
-                    contents.append(self._fetch_image(cta_placeholder_id, query[0], image_number=cta_image_number))
+                    contents.append(self._fetch_image(cta_placeholder_id, query, image_number=cta_image_number))
                     logger.info("✅ Generated Pexels CTA slide image (image_number=%d)", cta_image_number)
                 except Exception as exc:
                     logger.warning("Pexels fetch failed for CTA slide: %s", exc)
@@ -721,12 +904,22 @@ class PexelsImageProvider:
         else:
             # Fallback: Original behavior for other modes (if slide_count not provided)
             logger.warning("slide_count not provided, using fallback behavior")
-            for idx, (slide, term) in enumerate(zip(deck.slides, query * len(deck.slides))):
+            for idx, slide in enumerate(deck.slides):
                 if slide.image_url:
                     continue
                 try:
+                    # Priority: User keywords > Automatic extraction
+                    if user_provided_keywords:
+                        keyword_idx = idx % len(payload.prompt_keywords)
+                        query = payload.prompt_keywords[keyword_idx]
+                        logger.info(f"📝 Pexels slide {idx}: Using user-provided keyword: '{query}'")
+                    else:
+                        # Extract keywords from slide content automatically
+                        keywords = self._extract_keywords_from_text(slide.text)
+                        query = keywords[0] if keywords else "news"
+                        logger.info(f"📸 Pexels slide {idx}: Extracted keywords '{keywords}' from slide text")
                     # Use image_number=idx to get different images
-                    contents.append(self._fetch_image(slide.placeholder_id, term, image_number=idx))
+                    contents.append(self._fetch_image(slide.placeholder_id, query, image_number=idx))
                 except Exception as exc:
                     logger.warning("Pexels fetch failed: %s", exc)
         

@@ -179,14 +179,15 @@ class StoryOrchestrator:
         
         try:
             voice_provider = payload.voice_engine or self.default_voice_provider
+            logger.warning("Voice synthesis requested with provider=%s", voice_provider)
             voice_assets = (
                 self.voice_service.synthesize(narrative.slide_deck, language, voice_provider)
                 if voice_provider
                 else []
             )
-            logger.debug("Voice assets synthesized: %d", len(voice_assets))
+            logger.warning("Voice assets synthesized count=%d", len(voice_assets))
         except Exception as e:
-            logger.warning("Voice synthesis failed (non-critical): %s", e)
+            logger.warning("Voice synthesis failed (non-critical): %s", e, exc_info=True)
             voice_assets = []  # Continue without voice
 
         story_id = self.id_factory()

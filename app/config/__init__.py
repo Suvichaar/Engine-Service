@@ -120,12 +120,15 @@ def _env_override() -> Dict[str, Any]:
     def get_env_with_fallback(env_name: str) -> str | None:
         # Try original format first (uppercase with underscores)
         value = os.getenv(env_name)
-        if value is not None:
+        if value is not None and value != "":
             return value
         # Try Azure-compatible format (lowercase with hyphens)
         azure_name = env_name.lower().replace("_", "-")
         value = os.getenv(azure_name)
-        return value
+        if value is not None and value != "":
+            return value
+        # Treat empty strings as not set so they don't override settings.toml
+        return None
     
     mapping = {
         "azure_api": {

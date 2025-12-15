@@ -115,6 +115,21 @@ def get_session_factory():
 @lru_cache(maxsize=1)
 def get_orchestrator() -> StoryOrchestrator:
     settings = get_settings()
+    logger = logging.getLogger(__name__)
+
+    # --- Voice provider configuration ---------------------------------------
+    # For now, hard-wire ElevenLabs from known working credentials so that
+    # voice synthesis definitely uses it, independent of env override quirks.
+    ELEVENLABS_API_KEY = "sk_18ec75c00f3a3141f2766e4353ec918015cbb9ffbe79b439"
+    ELEVENLABS_VOICE_ID = "yD0Zg2jxgfQLY8I2MEHO"
+
+    # Debug: log loaded voice settings (warn level so they appear by default)
+    logger.warning(
+        "Voice config - elevenlabs: api_key_set=%s voice_id_set=%s",
+        bool(ELEVENLABS_API_KEY),
+        bool(ELEVENLABS_VOICE_ID),
+    )
+    logger.warning("Voice config - azure_voice: %s", settings.azure_voice)
 
     user_input_service = DefaultUserInputService()
     language_service = _build_language_service(settings)
@@ -147,7 +162,11 @@ def get_orchestrator() -> StoryOrchestrator:
     ):
         logging.info(f"✅ Initializing AIImageProvider with endpoint: {settings.ai_image.endpoint[:50]}...")
         image_providers.append(
-            AIImageProvider(endpoint=settings.ai_image.endpoint, api_key=settings.ai_image.api_key)
+            AIImageProvider(
+                endpoint=settings.ai_image.endpoint, 
+                api_key=settings.ai_image.api_key,
+                language_model=language_model  # Pass language_model for automatic alt_text generation
+            )
         )
     else:
         logging.warning("❌ AIImageProvider not initialized - missing ai_image configuration")
@@ -177,9 +196,11 @@ def get_orchestrator() -> StoryOrchestrator:
 
     voice_providers = []
     default_voice_provider = None
-    if settings.elevenlabs and not is_placeholder_value(settings.elevenlabs.api_key):
+
+    # ElevenLabs provider: use hard-coded credentials for now
+    if ELEVENLABS_API_KEY:
         voice_providers.append(
-            ElevenLabsClient(api_key=settings.elevenlabs.api_key, voice_id=settings.elevenlabs.voice_id)
+            ElevenLabsClient(api_key=ELEVENLABS_API_KEY, voice_id=ELEVENLABS_VOICE_ID)
         )
         default_voice_provider = "elevenlabs_pro"
     if settings.azure_voice and not is_placeholder_value(settings.azure_voice.speech_key):
@@ -196,6 +217,14 @@ def get_orchestrator() -> StoryOrchestrator:
         # fallback stub provider
         voice_providers.append(AzureTTSClient(api_key="stub", region="eastus", voice="en-US-AriaNeural"))
         default_voice_provider = "azure_basic"
+
+    # Debug: log which voice providers are available and which is default
+    try:
+        provider_names = [getattr(p, "name", type(p).__name__) for p in voice_providers]
+    except Exception:
+        provider_names = [type(p).__name__ for p in voice_providers]
+    logger.warning("Registered voice providers: %s", provider_names)
+    logger.warning("Default voice provider: %s", default_voice_provider)
 
     voice_storage_settings = settings.voice_storage or None
     voice_storage = S3VoiceStorageService(
