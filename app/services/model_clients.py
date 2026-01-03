@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import textwrap
 from typing import Iterable, Optional, Protocol
@@ -50,15 +51,38 @@ def _aggregate_chunks(chunks: Iterable[SemanticChunk], limit: int = 3) -> str:
 
 
 def _build_slide_deck(content_sections: list[str], template_key: str, language_code: str | None) -> SlideDeck:
-    slides = [
-        SlideBlock(
-            placeholder_id=f"section_{idx+1}",
-            text=section,
-        )
-        for idx, section in enumerate(content_sections)
-    ] or [
-        SlideBlock(placeholder_id="section_1", text="No content generated.")
-    ]
+    # Ensure we always have at least one slide with content
+    if not content_sections:
+        # Fallback: create a default slide instead of "No content generated"
+        slides = [
+            SlideBlock(
+                placeholder_id="section_1",
+                text="Breaking News Story",
+            )
+        ]
+    else:
+        # Filter out empty sections and ensure first slide is never empty
+        filtered_sections = []
+        for section in content_sections:
+            if section and section.strip():
+                filtered_sections.append(section.strip())
+        
+        # If all sections were empty, use fallback
+        if not filtered_sections:
+            filtered_sections = ["Breaking News Story"]
+        
+        # Ensure first slide (cover) is never empty
+        if not filtered_sections[0] or not filtered_sections[0].strip():
+            filtered_sections[0] = "Breaking News Story"
+        
+        slides = [
+            SlideBlock(
+                placeholder_id=f"section_{idx+1}",
+                text=section,
+            )
+            for idx, section in enumerate(filtered_sections)
+        ]
+    
     return SlideDeck(template_key=template_key, language_code=language_code, slides=slides)
 
 
@@ -137,21 +161,40 @@ class CuriousModelClient(ModelClient):
         logger = logging.getLogger(__name__)
         
         # Build system prompt similar to streamlit app
+        # Determine script/language name for better instructions
+        lang_script_map = {
+            "hi": "Devanagari script (हिंदी)",
+            "mr": "Devanagari script (मराठी)",
+            "gu": "Gujarati script (ગુજરાતી)",
+            "ta": "Tamil script (தமிழ்)",
+            "te": "Telugu script (తెలుగు)",
+            "kn": "Kannada script (ಕನ್ನಡ)",
+            "bn": "Bengali script (বাংলা)",
+            "pa": "Gurmukhi script (ਪੰਜਾਬੀ)",
+            "ur": "Urdu script (اردو)",
+            "or": "Odia script (ଓଡ଼ିଆ)",
+            "ml": "Malayalam script (മലയാളം)",
+        }
+        script_info = lang_script_map.get(target_lang, f"{target_lang} language")
+        
         system_prompt = f"""
 You are a multilingual teaching assistant.
 
 INPUT:
 - You will receive a topic or content to explain.
 
-MANDATORY:
-- Target language = "{target_lang}".
-- Produce ALL text fields strictly in the Target language.
+MANDATORY LANGUAGE REQUIREMENTS:
+- Target language code = "{target_lang}".
+- Story content (storytitle, s1paragraph1, s2paragraph1, etc.) MUST be written in {target_lang} language.
+- If target_lang is "hi", "mr", "gu", "ta", "te", "kn", "bn", "pa", "or", "ml", or "ur", use the appropriate native script ({script_info}).
+- Image prompts (s0alt1, s1alt1, s2alt1, etc.) MUST ALWAYS be in ENGLISH ONLY, regardless of story language.
 - IMPORTANT: Do NOT use markdown formatting (no **, no *, no #). Use plain text only.
 - Generate EXACTLY {middle_count} slides (s1paragraph1 through s{middle_count}paragraph1).
 
 Your job:
-1) Extract a short and catchy title → storytitle (≤ 80 characters, plain text only).
+1) Extract a short and catchy title → storytitle (≤ 80 characters, plain text only, in {target_lang} language).
 2) Summarise the content into EXACTLY {middle_count} slides (s1paragraph1..s{middle_count}paragraph1), each within character limits:
+   - All story content must be in {target_lang} language ({script_info}).
    - s1paragraph1: ≤ 500 characters
    - s2paragraph1: ≤ 450 characters
    - s3paragraph1: ≤ 400 characters
@@ -159,9 +202,10 @@ Your job:
    - s5paragraph1: ≤ 300 characters
    - s6paragraph1: ≤ 250 characters
    - Additional slides: ≤ 250 characters each
-3) For each slide, write a DALL·E image prompt for a 1024x1024 flat vector illustration:
-   - Cover slide: s0alt1 (for the story title/cover)
-   - Middle slides: s1alt1..s{middle_count}alt1 (one for each content slide)
+3) For each slide, write a DALL·E image prompt in ENGLISH ONLY (for image generation):
+   - Cover slide: s0alt1 (for the story title/cover) - MUST be in English
+   - Middle slides: s1alt1..s{middle_count}alt1 (one for each content slide) - MUST be in English
+   - Image prompts must be in ENGLISH, even if story content is in {target_lang}
    - Bright colors, clean lines, no text/captions/logos
    - Flat vector illustration style
    - Family-friendly and inclusive
@@ -172,7 +216,12 @@ SAFETY & POSITIVITY RULES:
 - No markdown formatting - plain text only.
 - Image prompts must be safe, no real-person likeness, no text in images.
 
-Respond strictly in this JSON format (keys in English; values in Target language). Include EXACTLY {middle_count} slides:
+CRITICAL: Respond strictly in this JSON format:
+- Keys: Always in English
+- Story content values (storytitle, s1paragraph1, etc.): In {target_lang} language ({script_info})
+- Image prompt values (s0alt1, s1alt1, etc.): ALWAYS in English only
+
+Include EXACTLY {middle_count} slides:
 
 {{
   "language": "{target_lang}",
@@ -266,13 +315,69 @@ Respond strictly in this JSON format (keys in English; values in Target language
         # Cover alt (s0alt1) - for cover slide (slides[0])
         if not result.get("s0alt1", "").strip():
             title = (result.get("storytitle") or "Educational Story").strip()
-            result["s0alt1"] = f"Cover for the story titled '{title}': welcoming, abstract, educational motif — {GENERIC_ALT}"
+            
+            # CRITICAL: Convert non-English title to English description for image prompt
+            # Story title remains in original language, only image prompt is converted
+            if target_lang != "en":
+                try:
+                    # Generate English description from non-English title for image prompt
+                    title_desc_prompt = f"""Convert this story title to a brief English description for an image prompt (max 50 words).
+Title: {title}
+Original Language: {target_lang}
+
+Return only the English description that captures the visual essence of the story, no quotes or labels."""
+                    
+                    title_desc = self._language_model.complete(
+                        "You are a translator. Convert story titles to English descriptions for image generation.",
+                        title_desc_prompt
+                    ).strip().strip('"').strip("'")
+                    
+                    if title_desc and len(title_desc) > 10:
+                        result["s0alt1"] = f"Cover illustration for story about {title_desc}: welcoming, abstract, educational motif — {GENERIC_ALT}"
+                    else:
+                        # Fallback if conversion fails
+                        result["s0alt1"] = f"Educational story cover illustration, welcoming, abstract, positive theme — {GENERIC_ALT}"
+                except Exception as e:
+                    logger.warning(f"Failed to convert title to English for image prompt: {e}")
+                    # Fallback if LLM fails
+                    result["s0alt1"] = f"Educational story cover illustration, welcoming, abstract, positive theme — {GENERIC_ALT}"
+            else:
+                # English title - use directly
+                result["s0alt1"] = f"Cover for the story titled '{title}': welcoming, abstract, educational motif — {GENERIC_ALT}"
         
         # Middle slide alts (s1alt1, s2alt1, etc.) - for slides[1], slides[2], etc.
         for i in range(1, middle_count + 1):
             if not result.get(f"s{i}alt1", "").strip():
                 seed = (result.get(f"s{i}paragraph1") or result.get("storytitle", "")).strip()
-                result[f"s{i}alt1"] = f"{seed} — {GENERIC_ALT}" if seed else GENERIC_ALT
+                
+                # CRITICAL: Convert non-English content to English description for image prompt
+                # Story content (s{i}paragraph1) remains in original language, only image prompt is converted
+                if target_lang != "en" and seed:
+                    try:
+                        # Generate English description from non-English content for image prompt
+                        desc_prompt = f"""Convert this story content to a brief English description for an image prompt (max 30 words).
+Content: {seed[:200]}
+Original Language: {target_lang}
+
+Return only the English description that captures the visual essence, no quotes or labels."""
+                        
+                        english_desc = self._language_model.complete(
+                            "You are a translator. Convert story content to English descriptions for image generation.",
+                            desc_prompt
+                        ).strip().strip('"').strip("'")
+                        
+                        if english_desc and len(english_desc) > 10:
+                            result[f"s{i}alt1"] = f"{english_desc} — {GENERIC_ALT}"
+                        else:
+                            # Fallback if conversion fails
+                            result[f"s{i}alt1"] = GENERIC_ALT
+                    except Exception as e:
+                        logger.warning(f"Failed to convert slide {i} content to English for image prompt: {e}")
+                        # Fallback if LLM fails
+                        result[f"s{i}alt1"] = GENERIC_ALT
+                else:
+                    # English content - use directly
+                    result[f"s{i}alt1"] = f"{seed} — {GENERIC_ALT}" if seed else GENERIC_ALT
         
         # Log final result
         logger.info(f"Curious mode generated {middle_count} middle slides + 1 cover = {middle_count + 1} total slides")
@@ -427,8 +532,57 @@ class NewsModelClient(ModelClient):
         """
         # Extract article text from semantic chunks
         article_text = self._extract_article_text(insights)
+        
+        # CRITICAL LAYER 2: Extract URL from insights and add URL context to force correct topic
+        source_url = None
+        url_context = ""
+        if insights.semantic_chunks:
+            first_chunk = insights.semantic_chunks[0]
+            source_url = first_chunk.source_id  # URL is stored in source_id
+            
+            if source_url and str(source_url).startswith(('http://', 'https://')):
+                from urllib.parse import urlparse
+                parsed = urlparse(str(source_url))
+                path_parts = [p for p in parsed.path.split('/') if p and len(p) > 3]
+                url_keywords = []
+                skip_words = {'article', 'news', 'sports', 'cricket', 'football', 'cities', 
+                             'entertainment', 'technology', 'business', 'politics', 'world'}
+                
+                # Extract keywords from last 3 path segments
+                for part in path_parts[-3:]:
+                    words = part.split('-')
+                    for word in words:
+                        if len(word) > 3 and word.lower() not in skip_words:
+                            url_keywords.append(word.lower())
+                
+                if url_keywords:
+                    unique_keywords = list(dict.fromkeys(url_keywords[:5]))  # Remove duplicates, keep first 5
+                    url_context = f"\n\nCRITICAL INSTRUCTION: The article URL contains these keywords: {', '.join(unique_keywords)}. The generated story MUST be about this topic. DO NOT generate about Delhi pollution, air quality, or any unrelated topic. The URL is: {source_url}. Ensure the story title and content match the URL topic."
+                    logging.getLogger(__name__).warning(f"🔍 Added URL context to LLM: {unique_keywords}")
+        
+        # Add URL context to article text to force correct topic generation
+        if url_context:
+            article_text = article_text + url_context
+        
         language = prompt.metadata.get("language", "en")
-        content_language = "Hindi" if language.startswith("hi") else "English"
+        # Extract base language code (e.g., "hi" from "hi-IN")
+        lang_code = language.split("-")[0] if "-" in language else language
+        
+        # Map language codes to language names for prompts
+        lang_name_map = {
+            "hi": "Hindi",
+            "mr": "Marathi",
+            "gu": "Gujarati",
+            "ta": "Tamil",
+            "te": "Telugu",
+            "kn": "Kannada",
+            "bn": "Bengali",
+            "pa": "Punjabi",
+            "ur": "Urdu",
+            "or": "Odia",
+            "ml": "Malayalam",
+        }
+        content_language = lang_name_map.get(lang_code, "English")
         
         # Detect category, subcategory, emotion if not provided
         if not category or not subcategory or not emotion:
@@ -455,8 +609,12 @@ class NewsModelClient(ModelClient):
         slide_char_limits = SLIDE_CHAR_LIMITS.copy()
         default_limit = slide_char_limits.get("default", 200)
         
-        # Add storytitle as first slide
-        narrations.append(self._clean_markdown(storytitle))
+        # Add storytitle as first slide - ensure it's never empty
+        cleaned_storytitle = self._clean_markdown(storytitle).strip()
+        if not cleaned_storytitle:
+            # Fallback: use first line of article or default
+            cleaned_storytitle = article_text.split("\n")[0].strip()[:80] if article_text else "Breaking News Story"
+        narrations.append(cleaned_storytitle)
         
         # Generate narrations for middle slides
         for idx, slide_data in enumerate(slides_structure[:middle_count], start=1):
@@ -491,28 +649,9 @@ class NewsModelClient(ModelClient):
         if not article_text or len(article_text.strip()) < 50:
             return ("News", "General", "Neutral")
         
-        if content_language == "Hindi":
-            prompt = f"""
-आप एक समाचार विश्लेषण विशेषज्ञ हैं।
-
-इस समाचार लेख का विश्लेषण करें और नीचे तीन बातें बताएं:
-
-1. category (श्रेणी)
-2. subcategory (उपश्रेणी)
-3. emotion (भावना)
-
-लेख:
-\"\"\"{article_text[:3000]}\"\"\"
-
-जवाब केवल JSON में दें:
-{{
-  "category": "...",
-  "subcategory": "...",
-  "emotion": "..."
-}}
-"""
-        else:
-            prompt = f"""
+        # Use English for category detection (more reliable for JSON parsing)
+        # But we'll generate content in the target language
+        prompt = f"""
 You are an expert news analyst.
 
 Analyze the following news article and return:
@@ -574,11 +713,17 @@ Return ONLY as JSON:
             guidance_lines.append(f"- Content Slide {story_slide - 1} (≤ 200 characters): {description}")
         
         guidance_text = "\n".join(guidance_lines) or "- Provide factual narrative for each slide."
-        language_clause = (
-            "Write all slide titles and prompts in Hindi (Devanagari script)."
-            if content_language == "Hindi"
-            else "Write all slide titles and prompts in English, even if the article text is in another language."
-        )
+        # CRITICAL: image_prompt must ALWAYS be in English for DALL-E, even if story content is in another language
+        if content_language == "Hindi":
+            language_clause = (
+                "Write slide titles and summaries in Hindi (Devanagari script). "
+                "IMPORTANT: image_prompt field MUST be in ENGLISH ONLY for image generation, even though other fields are in Hindi."
+            )
+        else:
+            language_clause = (
+                "Write all slide titles and prompts in English, even if the article text is in another language. "
+                "IMPORTANT: image_prompt field MUST be in ENGLISH ONLY for image generation."
+            )
         
         system_prompt = f"""
 Create an engaging Google Web Story based on the news article provided below.
@@ -594,7 +739,8 @@ Objectives:
 
 Language requirements:
 - {language_clause}
-- All fields must be written in {content_language}.
+- Slide titles and summaries must be written in {content_language}.
+- image_prompt field MUST ALWAYS be in English (for DALL-E image generation).
 
 Return JSON strictly in this format (NO markdown, NO code fences):
 {{
@@ -667,16 +813,32 @@ Guidance:
         
         slide1_limit = SLIDE_CHAR_LIMITS.get(1, 80)
         
-        if content_language == "Hindi":
+        # Map language names to script information for storytitle
+        script_map_title = {
+            "Hindi": "Devanagari script (हिंदी)",
+            "Marathi": "Devanagari script (मराठी)",
+            "Gujarati": "Gujarati script (ગુજરાતી)",
+            "Tamil": "Tamil script (தமிழ்)",
+            "Telugu": "Telugu script (తెలుగు)",
+            "Kannada": "Kannada script (ಕನ್ನಡ)",
+            "Bengali": "Bengali script (বাংলা)",
+            "Punjabi": "Gurmukhi script (ਪੰਜਾਬੀ)",
+            "Urdu": "Urdu script (اردو)",
+            "Odia": "Odia script (ଓଡ଼ିଆ)",
+            "Malayalam": "Malayalam script (മലയാളം)",
+        }
+        script_info_title = script_map_title.get(content_language, content_language)
+        
+        if content_language == "English":
             slide1_prompt = (
-                f"Generate news headline narration in Hindi for the story: {headline}. "
-                f"Maximum {slide1_limit} characters. Avoid greetings. Respond in Hindi (Devanagari script) only. "
+                f"Generate headline intro narration in English for: {headline}. "
+                f"Maximum {slide1_limit} characters. Avoid greetings. Respond in English only, translating the source if necessary. "
                 f"Do NOT use markdown formatting (no **, no *, no #). Use plain text only."
             )
         else:
             slide1_prompt = (
-                f"Generate headline intro narration in English for: {headline}. "
-                f"Maximum {slide1_limit} characters. Avoid greetings. Respond in English only, translating the source if necessary. "
+                f"Generate news headline narration in {content_language} for the story: {headline}. "
+                f"Maximum {slide1_limit} characters. Avoid greetings. Respond in {content_language} language using {script_info_title} only. "
                 f"Do NOT use markdown formatting (no **, no *, no #). Use plain text only."
             )
         
@@ -688,8 +850,15 @@ Guidance:
                 width=slide1_limit,
                 placeholder="…"
             )
-            return storytitle if storytitle else headline[:80]
-        except Exception:
+            # Ensure we always return a non-empty storytitle
+            if not storytitle or not storytitle.strip():
+                storytitle = headline[:slide1_limit] if headline else "Breaking News Story"
+            return storytitle.strip()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Storytitle generation failed: %s, using fallback", e)
+            # Always return a fallback - never empty
+            return headline[:slide1_limit] if headline else "Breaking News Story"
             return headline[:80]
 
     def _generate_slide_narration(
@@ -707,12 +876,28 @@ Guidance:
         if not summary_brief:
             summary_brief = caption or "Provide factual narration for this segment."
         
-        script_language = f"{content_language} (use Devanagari script)" if content_language == "Hindi" else content_language
-        language_requirement = (
-            "Deliver the narration strictly in Hindi (Devanagari script)."
-            if content_language == "Hindi"
-            else "Deliver the narration strictly in English. Do not include Hindi words or transliteration."
-        )
+        # Map language names to script information
+        script_map = {
+            "Hindi": "Devanagari script (हिंदी)",
+            "Marathi": "Devanagari script (मराठी)",
+            "Gujarati": "Gujarati script (ગુજરાતી)",
+            "Tamil": "Tamil script (தமிழ்)",
+            "Telugu": "Telugu script (తెలుగు)",
+            "Kannada": "Kannada script (ಕನ್ನಡ)",
+            "Bengali": "Bengali script (বাংলা)",
+            "Punjabi": "Gurmukhi script (ਪੰਜਾਬੀ)",
+            "Urdu": "Urdu script (اردو)",
+            "Odia": "Odia script (ଓଡ଼ିଆ)",
+            "Malayalam": "Malayalam script (മലയാളം)",
+        }
+        script_info = script_map.get(content_language, content_language)
+        
+        if content_language == "English":
+            script_language = "English"
+            language_requirement = "Deliver the narration strictly in English. Do not include words from other languages or transliteration."
+        else:
+            script_language = f"{content_language} (use {script_info})"
+            language_requirement = f"Deliver the narration strictly in {content_language} language using {script_info}. Do not use English or transliteration."
         
         character_sketch = (
             f"Polaris is a sincere and articulate {content_language} news anchor. "

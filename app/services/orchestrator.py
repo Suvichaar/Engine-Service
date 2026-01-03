@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import re
 import random
+import hashlib
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Optional, Sequence
 from uuid import UUID, uuid4
+
+import httpx
 
 from app.domain.dto import (
     AnalysisReport,
@@ -84,8 +88,104 @@ class StoryOrchestrator:
             raise ValueError(f"Failed to aggregate job request: {e}") from e
         
         try:
-            doc_insights = self.doc_pipeline.run(job_request)
+            # CRITICAL LAYER 1: Create mode-specific document pipeline with mode-specific URL extractor
+            # This ensures News and Curious modes have isolated caches
+            from app.services.url_extractor import URLContentExtractor
+            from app.services.document_intelligence import DefaultDocumentIntelligencePipeline
+            
+            mode_str = payload.mode.value if hasattr(payload.mode, 'value') else str(payload.mode)
+            mode_specific_extractor = URLContentExtractor(mode=mode_str)
+            
+            # Create mode-specific doc pipeline for this request
+            mode_doc_pipeline = DefaultDocumentIntelligencePipeline(
+                ocr_adapters=self.doc_pipeline._ocr_adapters,
+                parser_adapters=self.doc_pipeline._parser_adapters,
+                url_extractor=mode_specific_extractor
+            )
+            
+            logger.warning(f"🔍 Using mode-specific URL extractor for mode: {mode_str}")
+            doc_insights = mode_doc_pipeline.run(job_request)
             logger.debug("Document intelligence completed, chunks: %d", len(doc_insights.semantic_chunks))
+            
+            # CRITICAL: Validate that we got content from URLs if URLs were provided
+            if job_request.url_list and len(job_request.url_list) > 0:
+                if not doc_insights.semantic_chunks or len(doc_insights.semantic_chunks) == 0:
+                    error_msg = f"CRITICAL ERROR: No content extracted from {len(job_request.url_list)} URL(s). URLs: {[str(url) for url in job_request.url_list]}"
+                    logger.error(f"❌ {error_msg}")
+                    logger.error("❌ Story generation will fail or produce incorrect content!")
+                    raise ValueError(error_msg + " Please check the URLs and ensure article extraction is working.")
+                
+                # CRITICAL FINAL VALIDATION: Check if extracted content matches URL
+                # This is the LAST line of defense before story generation
+                first_chunk = doc_insights.semantic_chunks[0]
+                extracted_text = first_chunk.text.lower() if first_chunk.text else ""
+                extracted_title = first_chunk.metadata.get("title", "").lower() if first_chunk.metadata else ""
+                
+                logger.warning(f"🔍 FINAL VALIDATION: Checking URL-content match")
+                logger.warning(f"🔍 Extracted title: {extracted_title[:100]}")
+                logger.warning(f"🔍 Extracted text preview: {extracted_text[:200]}")
+                
+                # Check each URL against extracted content
+                for url in job_request.url_list:
+                    url_str = str(url).lower()
+                    logger.warning(f"🔍 Checking URL: {url_str}")
+                    
+                    # GENERAL validation: Check if URL path keywords match extracted content
+                    # This is a general approach that works for ANY topic mismatch, not just specific cases
+                    from urllib.parse import urlparse
+                    parsed = urlparse(url_str if url_str.startswith('http') else f'https://{url_str}')
+                    path_parts = parsed.path.split('/')
+                    url_keywords = []
+                    skip_words = {'article', 'news', 'story', 'com', 'org', 'www', 'http', 'https', 'indianexpress',
+                                 'sports', 'cities', 'entertainment', 'technology', 'business', 'politics', 'world',
+                                 'local', 'health', 'science', 'education', 'lifestyle', 'opinion', 'editorial', 'html'}
+                    
+                    for part in path_parts:
+                        part = part.split('?')[0].split('#')[0].strip()
+                        if not part or part == '/':
+                            continue
+                        words = part.split('-')
+                        for word in words:
+                            if len(word) > 3 and word not in skip_words and not word.isdigit():
+                                url_keywords.append(word)
+                    
+                    # Check overlap: How many URL keywords appear in content?
+                    if url_keywords:
+                        top_url_keywords = sorted(set(url_keywords), key=len, reverse=True)[:10]
+                        content_text = f"{extracted_title} {extracted_text}"
+                        
+                        # Count UNIQUE keyword matches (more accurate)
+                        unique_matches = set()
+                        for kw in top_url_keywords:
+                            if kw in content_text:
+                                unique_matches.add(kw)
+                        actual_unique_matches = len(unique_matches)
+                        match_ratio = actual_unique_matches / len(top_url_keywords) if top_url_keywords else 0
+                        
+                        # STRICT VALIDATION: Require at least 2-3 unique keywords to match
+                        min_required_matches = max(2, min(3, len(top_url_keywords) // 3))
+                        
+                        logger.warning(f"🔍 Final Validation: URL keywords={top_url_keywords[:5]}")
+                        logger.warning(f"🔍 Final Validation: Unique matches={actual_unique_matches}/{len(top_url_keywords)}, Match ratio={match_ratio*100:.1f}%, Required={min_required_matches}")
+                        
+                        # CRITICAL: Reject if match ratio is very low OR not enough unique matches
+                        if len(top_url_keywords) >= 3:
+                            if match_ratio < 0.1 or actual_unique_matches < min_required_matches:
+                                error_msg = f"CRITICAL MISMATCH DETECTED: URL keywords do not match extracted content. URL: {url_str}. Extracted title: {extracted_title[:100]}. URL keywords: {top_url_keywords}. Unique matches: {actual_unique_matches}/{len(top_url_keywords)} (required: {min_required_matches}). Match ratio: {match_ratio*100:.1f}% (expected >10%). This indicates wrong article was extracted. Story generation ABORTED."
+                                logger.error(f"❌ ===== FINAL VALIDATION FAILED =====")
+                                logger.error(f"❌ {error_msg}")
+                                raise ValueError(error_msg)
+                            else:
+                                logger.warning(f"✅ Final validation passed (%.1f%% match, %d unique matches, required %d)", match_ratio * 100, actual_unique_matches, min_required_matches)
+                        else:
+                            logger.warning(f"⚠️ Too few URL keywords ({len(top_url_keywords)}) for strict validation, accepting")
+                
+                # Log first chunk to verify content (using WARNING level so it shows in logs)
+                logger.warning(f"✅ Content extracted - First chunk preview: {first_chunk.text[:200] if first_chunk.text else 'Empty'}")
+                logger.warning(f"✅ Final validation passed - URL and content match")
+        except ValueError:
+            # Re-raise ValueError (our validation error)
+            raise
         except Exception as e:
             logger.error("Document intelligence pipeline failed: %s", e, exc_info=True)
             raise ValueError(f"Document processing failed: {e}") from e
@@ -144,12 +244,78 @@ class StoryOrchestrator:
             logger.error("Narrative generation failed: %s", e, exc_info=True)
             raise ValueError(f"Narrative generation failed: {e}") from e
 
+        # CRITICAL LAYER 3: Post-generation validation - check if generated story matches URL
+        if job_request.url_list and len(job_request.url_list) > 0 and narrative.slide_deck.slides:
+            story_title = narrative.slide_deck.slides[0].text if narrative.slide_deck.slides else ""
+            url_str = str(job_request.url_list[0]).lower()
+            
+            # Extract URL keywords
+            from urllib.parse import urlparse
+            parsed = urlparse(url_str if url_str.startswith('http') else f'https://{url_str}')
+            url_keywords = []
+            skip_words = {'article', 'news', 'sports', 'cricket', 'football', 'cities', 
+                         'entertainment', 'technology', 'business', 'politics', 'world'}
+            
+            for part in parsed.path.split('/')[-3:]:  # Last 3 path segments
+                if not part or part == '/':
+                    continue
+                words = part.split('-')
+                for word in words:
+                    if len(word) > 3 and word.lower() not in skip_words:
+                        url_keywords.append(word.lower())
+            
+            # Check if story title matches URL keywords
+            if url_keywords and story_title:
+                title_lower = story_title.lower()
+                unique_keywords = list(dict.fromkeys(url_keywords[:5]))  # First 5 unique keywords
+                matches = sum(1 for kw in unique_keywords if kw in title_lower)
+                
+                logger.warning(f"🔍 Post-generation validation: URL keywords={unique_keywords}, Story title={story_title[:100]}, Matches={matches}")
+                
+                # If less than 2 keywords match and we have 3+ keywords, regenerate
+                if matches < 2 and len(unique_keywords) >= 3:
+                    logger.error(f"❌ Generated story doesn't match URL! Title: {story_title[:100]}, URL keywords: {unique_keywords}, Matches: {matches}")
+                    logger.error(f"❌ Regenerating with explicit URL context...")
+                    
+                    # Add URL keywords to doc_insights metadata for forced regeneration
+                    if doc_insights.metadata is None:
+                        doc_insights.metadata = {}
+                    doc_insights.metadata["force_url_topic"] = " ".join(unique_keywords)
+                    doc_insights.metadata["source_url"] = url_str
+                    
+                    # Regenerate narrative with URL context
+                    try:
+                        if payload.mode == Mode.NEWS and hasattr(model_client, 'generate'):
+                            narrative = model_client.generate(
+                                rendered_prompt,
+                                doc_insights,
+                                slide_count=payload.slide_count,
+                                category=request.category,
+                                subcategory=None,
+                                emotion=None,
+                            )
+                        else:
+                            narrative = model_client.generate(rendered_prompt, doc_insights)
+                        logger.warning(f"✅ Regenerated story with URL context: {narrative.slide_deck.slides[0].text[:100] if narrative.slide_deck.slides else 'None'}")
+                    except Exception as regen_error:
+                        logger.error(f"❌ Regeneration failed: {regen_error}, continuing with original narrative")
+                else:
+                    logger.warning(f"✅ Post-generation validation passed: {matches} keywords matched")
+
         # Extract article images from doc_insights metadata
         article_images = None
         if doc_insights.metadata and "article_images" in doc_insights.metadata:
             article_images = doc_insights.metadata["article_images"]
 
+        # Extract article content from doc_insights for News mode image generation
+        # Combine all semantic chunks to get full article text
+        article_content = None
+        if doc_insights.semantic_chunks:
+            article_content = " ".join([chunk.text for chunk in doc_insights.semantic_chunks if chunk.text])
+            logger.debug(f"Extracted article content for image generation: {len(article_content)} characters")
+
         # For Curious mode, extract alt texts from narrative and pass to image pipeline
+        # For News mode, pass article content for relevant image generation
         updated_payload = payload  # Default to original payload
         if payload.mode == Mode.CURIOUS and hasattr(narrative, "raw_output"):
             try:
@@ -170,11 +336,31 @@ class StoryOrchestrator:
             except Exception as e:
                 logger.warning("Failed to extract alt texts from narrative: %s", e, exc_info=True)
         
+        # For News mode, add article content to metadata for image generation
+        if payload.mode == Mode.NEWS and article_content:
+            try:
+                updated_metadata = dict(updated_payload.metadata) if updated_payload.metadata else {}
+                updated_metadata["article_content"] = article_content
+                updated_payload = updated_payload.model_copy(update={"metadata": updated_metadata})
+                logger.info(f"Added article content to payload metadata for News mode image generation ({len(article_content)} chars)")
+            except Exception as e:
+                logger.warning("Failed to add article content to payload metadata: %s", e, exc_info=True)
+        
         try:
+            print(f"\n{'='*60}")
+            print(f"🖼️ ORCHESTRATOR: Starting image pipeline")
+            print(f"Mode: {payload.mode.value}, Image Source: {payload.image_source}, Slide Count: {payload.slide_count}")
+            print(f"{'='*60}\n")
+            logger.warning("🖼️ Starting image pipeline: mode=%s image_source=%s slide_count=%d", 
+                          payload.mode.value, payload.image_source, payload.slide_count)
             image_assets = self.image_pipeline.process(narrative.slide_deck, updated_payload, article_images=article_images)
-            logger.debug("Image assets processed: %d", len(image_assets))
+            print(f"✅ ORCHESTRATOR: Image assets processed: {len(image_assets)}\n")
+            logger.warning("🖼️ Image assets processed: %d", len(image_assets))
         except Exception as e:
-            logger.warning("Image pipeline failed (non-critical): %s", e)
+            print(f"\n❌ ORCHESTRATOR: Image pipeline failed: {e}\n")
+            import traceback
+            traceback.print_exc()
+            logger.warning("❌ Image pipeline failed (non-critical): %s", e, exc_info=True)
             image_assets = []  # Continue without images
         
         try:
@@ -385,6 +571,14 @@ class StoryOrchestrator:
                 # Generate slug from title
                 slug = self._slugify_title(story_title)
                 
+                # Double-check: Ensure slug is not empty (safety net)
+                if not slug or slug.strip() == '':
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning("Slug is empty after slugification, using hash fallback")
+                    title_hash = hashlib.md5(story_title.encode('utf-8')).hexdigest()[:8]
+                    slug = f"story-{title_hash}"
+                
                 # Generate Nano ID (matching JavaScript Canurl function)
                 alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-'
                 size = 10
@@ -417,26 +611,154 @@ class StoryOrchestrator:
     def _slugify_title(self, title: str) -> str:
         """
         Slugify a title to create URL-friendly slug.
+        Transliterates ANY non-English language to English if needed.
+        NEVER raises exceptions - always returns a valid slug.
         Matches JavaScript slugify logic:
         - Convert to lowercase
         - Replace spaces with hyphens
         - Remove non-alphanumeric characters (except hyphens)
         - Remove leading/trailing hyphens
         """
-        if not title or not isinstance(title, str):
-            raise ValueError("Invalid title: Title must be a non-empty string.")
+        logger = logging.getLogger(__name__)
         
-        # Step 1: Convert to lowercase
-        slug = title.lower()
+        try:
+            if not title or not isinstance(title, str):
+                logger.warning("Invalid title provided, using fallback")
+                return "story-" + hashlib.md5(str(title).encode('utf-8')).hexdigest()[:8]
+            
+            original_title = title  # Keep original for fallback
+            
+            # Step 1: Check if title contains non-ASCII characters (any non-English language)
+            # Count ASCII vs non-ASCII characters
+            ascii_chars = sum(1 for c in title if ord(c) < 128)
+            non_ascii_chars = len(title) - ascii_chars
+            
+            # If more than 30% non-ASCII, consider it non-English and transliterate
+            total_chars = len(title.replace(' ', ''))  # Exclude spaces for calculation
+            if total_chars > 0:
+                non_ascii_ratio = non_ascii_chars / total_chars
+                needs_transliteration = non_ascii_ratio > 0.3  # 30% threshold
+            else:
+                needs_transliteration = non_ascii_chars > 0
+            
+            # Step 2: If non-English, try to transliterate to English
+            if needs_transliteration:
+                try:
+                    logger.info("🔄 Attempting transliteration for non-English text: %s", title[:50])
+                    transliterated = self._transliterate_to_english(title)
+                    if transliterated and transliterated.strip() and len(transliterated.strip()) > 3:
+                        title = transliterated
+                        logger.info("✅ Using transliterated title: %s", title[:50])
+                    else:
+                        logger.warning("⚠️ Transliteration failed or returned invalid result, using original with hash fallback")
+                except Exception as e:
+                    # Extra safety - catch any exception from transliteration
+                    logger.warning("⚠️ Transliteration exception caught: %s, using original", str(e)[:100])
+                    # Continue with original title
+            
+            # Step 3: Convert to lowercase
+            slug = title.lower()
+            
+            # Step 4: Replace spaces with hyphens
+            slug = re.sub(r'\s+', '-', slug)
+            
+            # Step 5: Remove non-alphanumeric characters (except hyphens)
+            slug = re.sub(r'[^a-z0-9-]', '', slug)
+            
+            # Step 6: Remove leading or trailing hyphens
+            slug = re.sub(r'^-+|-+$', '', slug)
+            
+            # Step 7: If slug is still empty, use hash-based fallback
+            if not slug or slug.strip() == '':
+                title_hash = hashlib.md5(original_title.encode('utf-8')).hexdigest()[:8]
+                slug = f"story-{title_hash}"
+                logger.warning("⚠️ Slug empty after processing, using hash fallback: %s", slug)
+            
+            return slug
+            
+        except Exception as e:
+            # Ultimate fallback - should never reach here, but just in case
+            logger.error("❌ Critical error in _slugify_title: %s", e, exc_info=True)
+            fallback_hash = hashlib.md5(str(title).encode('utf-8')).hexdigest()[:8]
+            return f"story-{fallback_hash}"
+    
+    def _transliterate_to_english(self, text: str) -> Optional[str]:
+        """
+        Transliterate ANY non-English language text to English using Azure OpenAI.
+        Supports Hindi, Marathi, Tamil, Telugu, Bengali, Gujarati, Kannada, Punjabi, Urdu, Odia, Malayalam, and other languages.
+        Returns None if transliteration fails - never raises exceptions.
+        This is non-blocking and will not break story creation if it fails.
+        """
+        logger = logging.getLogger(__name__)
         
-        # Step 2: Replace spaces with hyphens
-        slug = re.sub(r'\s+', '-', slug)
-        
-        # Step 3: Remove non-alphanumeric characters (except hyphens)
-        slug = re.sub(r'[^a-z0-9-]', '', slug)
-        
-        # Step 4: Remove leading or trailing hyphens
-        slug = re.sub(r'^-+|-+$', '', slug)
-        
-        return slug
+        try:
+            from app.config import get_settings
+            
+            settings = get_settings()
+            
+            # Check if Azure OpenAI is configured
+            if not settings.azure_api or not settings.azure_api.api_key:
+                logger.debug("Azure OpenAI not configured, skipping transliteration")
+                return None
+            
+            # Limit text length for API call (reduced from 300 to 200 for faster calls)
+            text_snippet = text[:200] if len(text) > 200 else text
+            
+            # Updated prompt to handle ALL languages, not just Hindi/Marathi
+            prompt = f"""Convert this text to English transliteration (Roman script).
+The text may be in Hindi, Marathi, Tamil, Telugu, Bengali, Gujarati, Kannada, Punjabi, Urdu, Odia, Malayalam, or any other language.
+Return only the transliterated text in English (Roman script), no explanations:
+
+{text_snippet}"""
+
+            url = f"{settings.azure_api.endpoint.rstrip('/')}/openai/deployments/{settings.azure_api.deployment}/chat/completions"
+            params = {"api-version": settings.azure_api.api_version}
+            headers = {
+                "api-key": settings.azure_api.api_key,
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "messages": [
+                    {"role": "system", "content": "You are a transliteration expert. Convert text from any Indian language (Hindi, Marathi, Tamil, Telugu, Bengali, Gujarati, Kannada, Punjabi, Urdu, Odia, Malayalam) or any other language to English (Roman script). Return only the transliterated text."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,
+                "max_tokens": 150,  # Reduced from 200
+            }
+            
+            # Make API call with longer timeout and better error handling
+            try:
+                with httpx.Client(timeout=15.0) as client:  # Increased from 10.0 to 15.0
+                    response = client.post(url, headers=headers, params=params, json=payload, timeout=15.0)
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    choices = data.get("choices", [])
+                    if choices and choices[0].get("message"):
+                        transliterated = choices[0]["message"].get("content", "").strip()
+                        # Clean up any extra text that might be returned
+                        transliterated = transliterated.split('\n')[0].strip()  # Take first line only
+                        if transliterated and len(transliterated) > 0:
+                            logger.info("✅ Transliteration successful: %s -> %s", text[:50], transliterated[:50])
+                            return transliterated
+                        else:
+                            logger.warning("⚠️ Transliteration returned empty string")
+            except httpx.TimeoutException:
+                logger.warning("⚠️ Transliteration timeout (15s), using fallback")
+                return None
+            except httpx.HTTPStatusError as e:
+                logger.warning("⚠️ Transliteration HTTP error %s: %s", e.response.status_code, e.response.text[:200] if hasattr(e.response, 'text') else str(e))
+                return None
+            except httpx.RequestError as e:
+                logger.warning("⚠️ Transliteration request error: %s", str(e)[:200])
+                return None
+            
+            return None
+            
+        except Exception as e:
+            # Catch ALL exceptions to prevent breaking the story creation
+            logger = logging.getLogger(__name__)
+            logger.warning("⚠️ Transliteration failed with exception: %s (type: %s)", str(e)[:200], type(e).__name__)
+            # Don't re-raise - return None to use fallback
+            return None
 

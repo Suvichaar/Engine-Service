@@ -148,10 +148,27 @@ class PlaceholderMapper:
         storytitle = ""
         if record.slide_deck.slides:
             storytitle = record.slide_deck.slides[0].text or ""
-        placeholders["storytitle"] = storytitle[:180] if storytitle else "Web Story"
+            # If first slide is empty, try to get title from first middle slide
+            if not storytitle or not storytitle.strip():
+                if len(record.slide_deck.slides) > 1:
+                    storytitle = record.slide_deck.slides[1].text or ""
+                # If still empty, use a meaningful fallback
+                if not storytitle or not storytitle.strip():
+                    storytitle = "Breaking News Story"
+        
+        # Ensure storytitle is never empty
+        if not storytitle or not storytitle.strip():
+            storytitle = "Breaking News Story"
+        
+        # Story title - Keep original language (Hindi/Marathi/etc.) - DO NOT CHANGE
+        placeholders["storytitle"] = storytitle[:180].strip()
 
-        # Page title
-        placeholders["pagetitle"] = f"{storytitle} | Suvichaar" if storytitle else "Suvichaar Story"
+        # Page title - Use original story title in user's requested language
+        # Modern browsers support Unicode characters in page titles
+        if storytitle:
+            placeholders["pagetitle"] = f"{storytitle} | Suvichaar"
+        else:
+            placeholders["pagetitle"] = "Suvichaar Story"
 
         # Slide paragraphs (s1paragraph1, s2paragraph1, etc.)
         for idx, slide in enumerate(record.slide_deck.slides, start=1):
@@ -341,19 +358,15 @@ class PlaceholderMapper:
         else:
             # If already in correct format (en-US, hi-IN) or other format, use as-is
             placeholders["lang"] = lang if "-" in lang else f"{lang}-US"
-        
         # Content type: News for News mode, Article for Curious mode
         placeholders["contenttype"] = "News" if record.mode == Mode.NEWS else "Article"
-
         # URLs
         placeholders["canurl"] = str(record.canurl) if record.canurl else ""
         placeholders["canurl1"] = str(record.canurl1) if record.canurl1 else ""
-
         # Timestamps - ISO 8601 format with Z suffix (e.g., "2025-01-21T10:30:00.000000Z")
         iso_time = record.created_at.isoformat() + "Z"
         placeholders["publishedtime"] = iso_time
         placeholders["modifiedtime"] = iso_time
-
         # Branding
         logo_base = "https://media.suvichaar.org/filters:resize"
         placeholders["sitelogo32x32"] = f"{logo_base}/32x32/media/brandasset/suvichaariconblack.png"
@@ -364,7 +377,6 @@ class PlaceholderMapper:
         placeholders["organization"] = self._organization
         placeholders["publisher"] = self._organization
         placeholders["publisherlogosrc"] = "https://media.suvichaar.org/media/designasset/brandasset/icons/quaternary/whitequaternaryicon.png"
-
         # Additional placeholders (optional)
         placeholders["user"] = "Suvichaar Team"
         placeholders["userprofileurl"] = "https://suvichaar.org"
@@ -373,7 +385,6 @@ class PlaceholderMapper:
         placeholders["nextstorytitle"] = ""
         placeholders["nextstorylink"] = ""
         # msthumbnailcoverurl is already set above in Images section
-
         # Ensure potraitcoverurl is always set (critical for cover and CTA slides)
         potraitcoverurl_value = placeholders.get("potraitcoverurl", "").strip()
         if not potraitcoverurl_value or potraitcoverurl_value == "{{potraitcoverurl}}" or potraitcoverurl_value.startswith("{{"):
@@ -384,9 +395,7 @@ class PlaceholderMapper:
                                potraitcoverurl_value, self._default_cover_image)
         else:
             self._logger.info("Final potraitcoverurl value: %s", placeholders["potraitcoverurl"])
-        
         return placeholders
-
     def _get_image_url(self, image_assets: list[ImageAsset], index: int, default: str) -> str:
         """Get image URL from assets, with fallback."""
         if index < len(image_assets):
@@ -667,7 +676,6 @@ class HTMLTemplateRenderer:
             
             if cta_image_url:
                 # Replace {{potraitcoverurl}} or {{cta_image_url}} in CTA slide section
-                import re
                 # Replace both potraitcoverurl and cta_image_url placeholders
                 cta_pattern = r'(<amp-story-page id="cta-slide"[^>]*>.*?<amp-img src=")\{\{(?:potraitcoverurl|cta_image_url)\}\}'
                 replacement = r'\1{{cta_image_url}}'
@@ -684,7 +692,6 @@ class HTMLTemplateRenderer:
         if "{{potraitcoverurl}}" in filled_html:
             self._logger.error("ERROR: potraitcoverurl placeholder was NOT replaced in HTML!")
             # Try to find where it appears
-            import re
             matches = re.findall(r'[^"]*\{\{potraitcoverurl\}\}[^"]*', filled_html)
             if matches:
                 self._logger.error("Found unreplaced placeholder in: %s", matches[0][:200])
@@ -699,6 +706,27 @@ class HTMLTemplateRenderer:
 
         # 6. Cleanup (remove stray curly braces from URLs)
         filled_html = self._cleanup_urls(filled_html)
+        
+        # 7. Fix canonical link: Replace hardcoded "self.html" with actual canurl
+        if record.canurl:
+            canurl_str = str(record.canurl)
+            # Replace href="self.html" with actual canurl
+            filled_html = re.sub(
+                r'<link\s+rel="canonical"\s+href="self\.html"\s*/>',
+                f'<link rel="canonical" href="{canurl_str}" />',
+                filled_html,
+                flags=re.IGNORECASE
+            )
+            # Also handle variations like href='self.html' or href="self.html" with spaces
+            filled_html = re.sub(
+                r'<link\s+rel="canonical"\s+href=[\'"]self\.html[\'"]\s*/>',
+                f'<link rel="canonical" href="{canurl_str}" />',
+                filled_html,
+                flags=re.IGNORECASE
+            )
+            self._logger.info("✅ Fixed canonical link: replaced 'self.html' with %s", canurl_str)
+        else:
+            self._logger.warning("⚠️ No canurl available, cannot fix canonical link")
         
         # Final check: Ensure potraitcoverurl is replaced (critical for cover and CTA)
         if "{{potraitcoverurl}}" in filled_html:
@@ -763,14 +791,13 @@ class HTMLTemplateRenderer:
         #   - CTA: 1 (template)
         #   Total = 4
         # We skip slide[0] (used in cover) and generate slide[1] to slide[slide_count-2]
-        middle_slides_count = max(0, record.slide_count - 2)  # Exclude cover (1) and CTA (1)
-        
+        middle_slides_count = max(0, record.slide_count - 2)  # Exclude cover (1) and CTA (1)        
         # Skip first slide (used in cover), take next middle_slides_count slides
         if len(record.slide_deck.slides) > 1:
             slides_to_generate = record.slide_deck.slides[1:1+middle_slides_count] if middle_slides_count > 0 else []
         else:
             slides_to_generate = []
-        
+    
         self._logger.debug("Generating %d slides (requested: %d, available: %d)", 
                           len(slides_to_generate), record.slide_count, len(record.slide_deck.slides))
         

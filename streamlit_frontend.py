@@ -8,6 +8,7 @@ import requests
 import json
 import os
 import uuid
+import time
 from typing import Optional, List
 from pathlib import Path
 from datetime import datetime
@@ -27,7 +28,7 @@ except ImportError:
 try:
     FASTAPI_BASE_URL = st.secrets.get("fastapi", {}).get("BASE_URL", "https://localhost:8000")
 except:
-    FASTAPI_BASE_URL = os.getenv("FASTAPI_BASE_URL", "https://https://localhost:8000")
+    FASTAPI_BASE_URL = os.getenv("FASTAPI_BASE_URL", "https://localhost:8000")
 
 # Get AWS credentials from secrets, environment, or settings.toml
 # Images go to suvichaarapp bucket, HTML goes to suvichaarstories bucket
@@ -96,6 +97,49 @@ if not AWS_ACCESS_KEY or not AWS_SECRET_KEY:
         pass
 
 API_ENDPOINT = f"{FASTAPI_BASE_URL}/stories"
+
+# =========================
+# Session Management - Isolated per user
+# =========================
+def get_user_session_id() -> str:
+    """
+    Get or create a unique session ID for the current user.
+    Each browser session gets its own isolated session ID.
+    This ensures complete isolation between different users.
+    """
+    if "user_session_id" not in st.session_state:
+        # Generate unique session ID for this user
+        st.session_state.user_session_id = str(uuid.uuid4())
+        st.session_state.session_created_at = time.time()
+    
+    return st.session_state.user_session_id
+
+def get_session_key(key: str) -> str:
+    """
+    Get a namespaced session key for the current user.
+    This ensures each user's session state is completely isolated.
+    Format: {session_id}_{key}
+    """
+    session_id = get_user_session_id()
+    return f"{session_id}_{key}"
+
+def clear_user_session():
+    """
+    Clear all session state for the current user.
+    Useful for resetting the session completely.
+    """
+    session_id = get_user_session_id()
+    keys_to_delete = [key for key in st.session_state.keys() if key.startswith(f"{session_id}_")]
+    for key in keys_to_delete:
+        del st.session_state[key]
+    # Also clear the session ID itself
+    if "user_session_id" in st.session_state:
+        del st.session_state["user_session_id"]
+    if "session_created_at" in st.session_state:
+        del st.session_state["session_created_at"]
+
+# Initialize user session at startup
+USER_SESSION_ID = get_user_session_id()
 
 # =========================
 # S3 Upload Helper Functions
@@ -191,7 +235,9 @@ def create_story(payload: dict, base_url: str = None) -> dict:
     """Call FastAPI to create a story."""
     endpoint = f"{base_url or FASTAPI_BASE_URL}/stories"
     try:
-        response = requests.post(endpoint, json=payload, timeout=300)
+        # Increased timeout to 600 seconds (10 minutes) to handle AI image generation
+        # which can take time due to API delays and rate limiting
+        response = requests.post(endpoint, json=payload, timeout=600)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.HTTPError as e:
@@ -362,6 +408,7 @@ if mode == "news":
             key="news_prompt_keywords"
         )
         prompt_keywords = [k.strip() for k in prompt_keywords_input.split(",") if k.strip()] if prompt_keywords_input else []
+        st.session_state["prompt_keywords"] = prompt_keywords
     elif image_source_radio == "pexels":
         prompt_keywords_input = st.text_input(
             "Search Keywords (comma-separated)",
@@ -370,9 +417,12 @@ if mode == "news":
             key="news_pexels_keywords"
         )
         prompt_keywords = [k.strip() for k in prompt_keywords_input.split(",") if k.strip()] if prompt_keywords_input else []
+        st.session_state["prompt_keywords"] = prompt_keywords
     
     # Convert "default" to None for backend compatibility
     image_source = None if image_source_radio == "default" else image_source_radio
+    # Store in session state for use in form submission
+    st.session_state["image_source"] = image_source
     
     # Custom Images Upload for News - show when custom is selected
     uploaded_background_images = []
@@ -421,6 +471,8 @@ elif mode == "curious":
     )
     
     image_source = image_source_radio
+    # Store in session state for use in form submission
+    st.session_state["image_source"] = image_source
     
     # Prompt Keywords for AI/Pexels (Curious mode) - show when AI or Pexels is selected
     prompt_keywords = None
@@ -432,6 +484,7 @@ elif mode == "curious":
             key="curious_prompt_keywords"
         )
         prompt_keywords = [k.strip() for k in prompt_keywords_input.split(",") if k.strip()] if prompt_keywords_input else []
+        st.session_state["prompt_keywords"] = prompt_keywords
     
     # Custom Images Upload for Curious - show when custom is selected
     uploaded_background_images = []
@@ -468,7 +521,35 @@ else:
     prompt_keywords = None
     uploaded_background_images = []
 
-with st.form("story_form", clear_on_submit=False):
+# BEFORE FORM: Handle key generation for fresh input fields
+# This ensures the form always renders with a fresh field after submission
+# Using session-specific keys for complete user isolation
+if mode == "news":
+    # If form was submitted in previous run, set flag to generate new UUID key
+    news_form_submitted_key = get_session_key("news_form_submitted")
+    if news_form_submitted_key in st.session_state and st.session_state[news_form_submitted_key]:
+        st.session_state[news_form_submitted_key] = False
+        news_just_submitted_key = get_session_key("news_just_submitted")
+        st.session_state[news_just_submitted_key] = True  # Flag to generate new UUID in form
+        # Clear ALL old input keys for this session to prevent any caching
+        session_id = get_user_session_id()
+        keys_to_delete = [key for key in st.session_state.keys() if key.startswith(f"{session_id}_news_user_input_")]
+        for key in keys_to_delete:
+            del st.session_state[key]
+else:  # curious
+    # If form was submitted in previous run, set flag to generate new UUID key
+    curious_form_submitted_key = get_session_key("curious_form_submitted")
+    if curious_form_submitted_key in st.session_state and st.session_state[curious_form_submitted_key]:
+        st.session_state[curious_form_submitted_key] = False
+        curious_just_submitted_key = get_session_key("curious_just_submitted")
+        st.session_state[curious_just_submitted_key] = True  # Flag to generate new UUID in form
+        # Clear ALL old input keys for this session to prevent any caching
+        session_id = get_user_session_id()
+        keys_to_delete = [key for key in st.session_state.keys() if key.startswith(f"{session_id}_curious_user_input_")]
+        for key in keys_to_delete:
+            del st.session_state[key]
+
+with st.form("story_form", clear_on_submit=True):
     
     # Set template options based on mode
     if mode == "news":
@@ -521,18 +602,92 @@ with st.form("story_form", clear_on_submit=False):
     # User Input (Unified) - Different labels for different modes
     st.markdown("### 📄 Content Input")
     if mode == "news":
+        # Use UUID-based key that changes on every form submission
+        # This ensures Streamlit treats it as a completely new widget each time
+        # Using session-specific keys for complete user isolation
+        new_widget_created = False
+        news_just_submitted_key = get_session_key("news_just_submitted")
+        news_user_input_key_key = get_session_key("news_user_input_key")
+        
+        if news_just_submitted_key in st.session_state and st.session_state[news_just_submitted_key]:
+            # Generate completely new UUID key after submission
+            old_key = st.session_state.get(news_user_input_key_key)
+            st.session_state[news_user_input_key_key] = str(uuid.uuid4())
+            st.session_state[news_just_submitted_key] = False
+            new_widget_created = True  # Track that we just created a new widget
+            # Clear the old key's value immediately (session-specific)
+            if old_key:
+                old_input_key = get_session_key(f"news_user_input_{old_key}")
+                if old_input_key in st.session_state:
+                    del st.session_state[old_input_key]
+        elif news_user_input_key_key not in st.session_state:
+            # Initialize with UUID on first render
+            st.session_state[news_user_input_key_key] = str(uuid.uuid4())
+            new_widget_created = True  # First render - new widget
+        
+        current_uuid = st.session_state.get(news_user_input_key_key, str(uuid.uuid4()))
+        input_key = get_session_key(f"news_user_input_{current_uuid}")
+        
+        # Only clear the value if we just created a new widget in this render
+        # Don't clear on every render - that would delete user input while typing!
+        if new_widget_created and input_key in st.session_state:
+            del st.session_state[input_key]
+        
         user_input = st.text_area(
             "Article URL or Content",
             height=150,
             placeholder="Enter article URL (e.g., https://example.com/article) OR paste article content here...",
-            help="Enter article URL to extract content, or paste article text directly"
+            help="Enter article URL to extract content, or paste article text directly",
+            key=input_key
         )
     else:  # curious
+        # Use UUID-based key that changes on every form submission
+        # This ensures Streamlit treats it as a completely new widget each time
+        # Using session-specific keys for complete user isolation
+        new_widget_created = False
+        curious_just_submitted_key = get_session_key("curious_just_submitted")
+        curious_user_input_key_key = get_session_key("curious_user_input_key")
+        
+        if curious_just_submitted_key in st.session_state and st.session_state[curious_just_submitted_key]:
+            # Generate completely new UUID key after submission
+            old_key = st.session_state.get(curious_user_input_key_key)
+            st.session_state[curious_user_input_key_key] = str(uuid.uuid4())
+            st.session_state[curious_just_submitted_key] = False
+            new_widget_created = True  # Track that we just created a new widget
+            # Clear the old key's value immediately (session-specific)
+            if old_key:
+                old_input_key = get_session_key(f"curious_user_input_{old_key}")
+                if old_input_key in st.session_state:
+                    del st.session_state[old_input_key]
+        elif curious_user_input_key_key not in st.session_state:
+            # Initialize with UUID on first render
+            st.session_state[curious_user_input_key_key] = str(uuid.uuid4())
+            new_widget_created = True  # First render - new widget
+        
+        current_uuid = st.session_state.get(curious_user_input_key_key, str(uuid.uuid4()))
+        input_key = get_session_key(f"curious_user_input_{current_uuid}")
+        
+        # Only clear the value if we just created a new widget in this render
+        # Don't clear on every render - that would delete user input while typing!
+        if new_widget_created and input_key in st.session_state:
+            del st.session_state[input_key]
+        
         user_input = st.text_area(
             "Topic or Keywords",
             height=150,
             placeholder="Enter topic, keywords, or question (e.g., 'How does quantum computing work?')",
-            help="Enter topic, keywords, or question for educational content"
+            help="Enter topic, keywords, or question for educational content",
+            key=input_key
+        )
+    
+    # Special Notes field - ONLY for News mode (Curious mode already supports language in user_input)
+    special_notes = None
+    if mode == "news":
+        special_notes = st.text_area(
+            "Special Notes",
+            height=100,
+            placeholder="Optional: Add special instructions (e.g., 'i want in hindi', 'generate in marathi', etc.)",
+            help="Add any special instructions or language preferences. Default is English if not specified."
         )
     
     # Attachments Section (for both modes - for content extraction)
@@ -574,23 +729,58 @@ with st.form("story_form", clear_on_submit=False):
 
 # Process Form Submission
 if submitted:
+    # Set flag to indicate form was submitted - this will trigger counter increment on next render
+    # The counter increment happens BEFORE form renders, ensuring fresh field
+    # Using session-specific keys for complete user isolation
+    if mode == "news":
+        news_form_submitted_key = get_session_key("news_form_submitted")
+        st.session_state[news_form_submitted_key] = True
+    else:
+        curious_form_submitted_key = get_session_key("curious_form_submitted")
+        st.session_state[curious_form_submitted_key] = True
+    
     if not user_input and not uploaded_attachments:
         st.error("❌ Please enter content (text/URL) or upload attachments")
     else:
         # Build payload
+        # Get image_source directly from radio button keys (more reliable)
+        if mode == "news":
+            image_source_radio_value = st.session_state.get("news_image_source_radio", "default")
+            current_image_source = None if image_source_radio_value == "default" else image_source_radio_value
+        else:  # curious
+            current_image_source = st.session_state.get("curious_image_source_radio", "ai")
+        
+        # Debug: Print what we're getting from session state
+        st.write(f"🔍 DEBUG: mode={mode}, image_source_radio_value={image_source_radio_value if mode == 'news' else st.session_state.get('curious_image_source_radio', 'ai')}, current_image_source={current_image_source}")
+        
         payload = {
             "mode": mode,
             "template_key": template_key,
             "slide_count": slide_count,
             "user_input": user_input if user_input else None,
+            "notes": special_notes if special_notes else None,  # Special Notes field
             "category": category,
-            "image_source": image_source,
+            "image_source": current_image_source,
             "voice_engine": voice_engine,
         }
         
         # Add prompt_keywords for AI/Pexels (both News and Curious modes)
-        if image_source in ["ai", "pexels"] and prompt_keywords:
-            payload["prompt_keywords"] = prompt_keywords
+        # Get prompt_keywords from mode-specific keys
+        if mode == "news":
+            if current_image_source == "ai":
+                prompt_keywords_str = st.session_state.get("news_prompt_keywords", "")
+                current_prompt_keywords = [k.strip() for k in prompt_keywords_str.split(",") if k.strip()] if prompt_keywords_str else []
+            elif current_image_source == "pexels":
+                prompt_keywords_str = st.session_state.get("news_pexels_keywords", "")
+                current_prompt_keywords = [k.strip() for k in prompt_keywords_str.split(",") if k.strip()] if prompt_keywords_str else []
+            else:
+                current_prompt_keywords = None
+        else:  # curious
+            prompt_keywords_str = st.session_state.get("curious_prompt_keywords", "")
+            current_prompt_keywords = [k.strip() for k in prompt_keywords_str.split(",") if k.strip()] if prompt_keywords_str else []
+        
+        if current_image_source in ["ai", "pexels"] and current_prompt_keywords:
+            payload["prompt_keywords"] = current_prompt_keywords
         
         # Handle attachments (for content extraction)
         attachments_list = []
@@ -676,6 +866,7 @@ if submitted:
             # Debug: Show specific values
             st.write("🔍 **Debug Info:**")
             st.write(f"- Mode: {payload.get('mode')}")
+            st.write(f"- User Input (URL/Content): {payload.get('user_input', '')[:100]}...")  # Show first 100 chars
             st.write(f"- Image Source: {payload.get('image_source')}")
             st.write(f"- Prompt Keywords: {payload.get('prompt_keywords', 'None')}")
             st.write(f"- Template Key: {payload.get('template_key')}")
@@ -690,6 +881,39 @@ if submitted:
                 result = create_story(payload, base_url=current_api_url)
                 st.success("✅ Story generated successfully!")
                 
+                # IMPORTANT: Clear the user_input field immediately after successful submission
+                # This prevents the same URL from appearing in the form on next render
+                # Using session-specific keys for complete user isolation
+                session_id = get_user_session_id()
+                if mode == "news":
+                    # Set flags to generate new UUID key on next render (session-specific)
+                    news_form_submitted_key = get_session_key("news_form_submitted")
+                    news_just_submitted_key = get_session_key("news_just_submitted")
+                    st.session_state[news_form_submitted_key] = True
+                    st.session_state[news_just_submitted_key] = True
+                    # Clear ALL possible old keys for this session only (aggressive cleanup)
+                    keys_to_delete = [key for key in st.session_state.keys() if key.startswith(f"{session_id}_news_user_input_")]
+                    for key in keys_to_delete:
+                        del st.session_state[key]
+                    # Also clear the base key (session-specific)
+                    news_user_input_key_key = get_session_key("news_user_input_key")
+                    if news_user_input_key_key in st.session_state:
+                        del st.session_state[news_user_input_key_key]
+                else:
+                    # Set flags to generate new UUID key on next render (session-specific)
+                    curious_form_submitted_key = get_session_key("curious_form_submitted")
+                    curious_just_submitted_key = get_session_key("curious_just_submitted")
+                    st.session_state[curious_form_submitted_key] = True
+                    st.session_state[curious_just_submitted_key] = True
+                    # Clear ALL possible old keys for this session only (aggressive cleanup)
+                    keys_to_delete = [key for key in st.session_state.keys() if key.startswith(f"{session_id}_curious_user_input_")]
+                    for key in keys_to_delete:
+                        del st.session_state[key]
+                    # Also clear the base key (session-specific)
+                    curious_user_input_key_key = get_session_key("curious_user_input_key")
+                    if curious_user_input_key_key in st.session_state:
+                        del st.session_state[curious_user_input_key_key]
+                
                 # Store in session state
                 st.session_state["last_story"] = result
                 st.session_state["story_id"] = result.get("id")
@@ -698,12 +922,53 @@ if submitted:
                 st.markdown("---")
                 st.header("📊 Story Details")
                 
+                # DEBUG: Show extraction status (collapsible)
+                doc_insights = result.get("doc_insights", {})
+                if doc_insights:
+                    urls = doc_insights.get("urls", [])
+                    semantic_chunks = doc_insights.get("semantic_chunks", [])
+                    with st.expander("🔍 Debug: Article Extraction Status", expanded=False):
+                        st.write(f"**URLs processed:** {len(urls)}")
+                        if urls:
+                            for url in urls:
+                                st.code(url, language=None)
+                        st.write(f"**Semantic chunks extracted:** {len(semantic_chunks)}")
+                        if semantic_chunks:
+                            first_chunk = semantic_chunks[0] if isinstance(semantic_chunks, list) else None
+                            if first_chunk:
+                                # Handle both dict (JSON) and SemanticChunk object
+                                if isinstance(first_chunk, dict):
+                                    chunk_text = first_chunk.get("text", "")
+                                    chunk_title = first_chunk.get("metadata", {}).get("title", "N/A")
+                                else:
+                                    # Pydantic model object
+                                    chunk_text = getattr(first_chunk, "text", "")
+                                    chunk_title = getattr(first_chunk, "metadata", {}).get("title", "N/A") if hasattr(first_chunk, "metadata") else "N/A"
+                                st.write(f"**Title:** {chunk_title}")
+                                st.write(f"**First chunk preview:** {chunk_text[:300]}...")
+                        else:
+                            st.warning("⚠️ No semantic chunks extracted! This may cause incorrect story generation.")
+                
                 col1, col2 = st.columns(2)
                 
                 with col1:
                     st.subheader("🔗 URLs")
                     canurl = result.get("canurl")
                     canurl1 = result.get("canurl1")
+                    
+                    # Display original article URL if available
+                    doc_insights = result.get("doc_insights", {})
+                    original_url = None
+                    if doc_insights:
+                        urls = doc_insights.get("urls", [])
+                        if urls:
+                            original_url = urls[0] if isinstance(urls, list) else urls
+                    
+                    if original_url:
+                        st.markdown(f"**📰 Original Article URL:**")
+                        st.code(original_url, language=None)
+                        st.markdown(f"[Open Article]({original_url})")
+                        st.markdown("---")
                     
                     if canurl:
                         st.markdown(f"**Primary URL:**")
@@ -717,7 +982,7 @@ if submitted:
                 
                 with col2:
                     st.subheader("📈 Metadata")
-                    st.json({
+                    metadata = {
                         "Story ID": result.get("id"),
                         "Mode": result.get("mode"),
                         "Category": result.get("category"),
@@ -725,7 +990,14 @@ if submitted:
                         "Slides": result.get("slide_count"),
                         "Language": result.get("input_language"),
                         "Created": result.get("created_at"),
-                    })
+                    }
+                    # Add original article URL if available in doc_insights
+                    doc_insights = result.get("doc_insights", {})
+                    if doc_insights:
+                        urls = doc_insights.get("urls", [])
+                        if urls:
+                            metadata["Original Article URL"] = urls[0] if isinstance(urls, list) else urls
+                    st.json(metadata)
                 
                 # Story Content Preview
                 st.markdown("---")

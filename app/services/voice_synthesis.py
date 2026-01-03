@@ -59,18 +59,39 @@ class DefaultVoiceSynthesisService(VoiceSynthesisService):
             return []
 
         # Generate separate audio for each slide (not combined)
+        # Important: Generate assets for ALL slides in order, even if empty, to match slide indices
         assets: list[VoiceAsset] = []
-        for slide in deck.slides:
+        for idx, slide in enumerate(deck.slides):
             if not slide.text or not slide.text.strip():
-                continue  # Skip empty slides
+                # For empty slides, create a placeholder/minimal audio asset to maintain index alignment
+                logger.warning("Slide %d has no text, generating placeholder audio", idx + 1)
+                # Generate minimal audio for empty slides (short silence or placeholder text)
+                slide_text = " "  # Single space as placeholder
+            else:
+                # Use slide text directly (no "Slide 1:", "Slide 2:" prefix)
+                slide_text = slide.text.strip()
             
-            # Use slide text directly (no "Slide 1:", "Slide 2:" prefix)
-            slide_text = slide.text.strip()
-            audio = voice_provider.synthesize(slide_text, language=language.language_code)
-            filename = f"{uuid4()}.{audio.format}"
-            asset = self._storage.store(audio=audio, filename=filename)
-            assets.append(asset)
+            try:
+                audio = voice_provider.synthesize(slide_text, language=language.language_code)
+                filename = f"{uuid4()}.{audio.format}"
+                asset = self._storage.store(audio=audio, filename=filename)
+                assets.append(asset)
+            except Exception as e:
+                logger.warning("Failed to generate audio for slide %d: %s", idx + 1, e)
+                # Create a placeholder asset to maintain index alignment
+                # This ensures voice_assets[0] = slide 0, voice_assets[1] = slide 1, etc.
+                from app.domain.dto import VoiceAsset
+                from pydantic import HttpUrl
+                placeholder_url = HttpUrl("https://media.suvichaar.org/placeholder-audio.mp3")
+                placeholder_asset = VoiceAsset(
+                    provider=voice_provider.name,
+                    voice_id=None,
+                    audio_url=placeholder_url,
+                    duration_seconds=None,
+                )
+                assets.append(placeholder_asset)
         
+        logger.warning("Generated %d voice assets for %d slides", len(assets), len(deck.slides))
         return assets
 
     def _resolve_provider(self, provider_id: str) -> Optional[VoiceProvider]:
@@ -145,9 +166,14 @@ class AzureTTSClient:
             "Content-Type": "application/ssml+xml",
             "X-Microsoft-OutputFormat": "audio-16khz-32kbitrate-mono-mp3",
         }
+        # Escape special XML/SSML characters for safe SSML generation
+        import html
+        # html.escape handles &, <, > automatically
+        # quote=False means don't escape quotes (we use single quotes in SSML)
+        escaped_text = html.escape(text, quote=False)
         ssml = (
             "<speak version='1.0' xml:lang='en-US'>"
-            f"<voice name='{self._voice}'>{text}</voice>"
+            f"<voice name='{self._voice}'>{escaped_text}</voice>"
             "</speak>"
         )
         url = f"https://{self._region}.tts.speech.microsoft.com/cognitiveservices/v1"

@@ -12,6 +12,16 @@ import httpx
 
 from app.domain.dto import ImageAsset, IntakePayload, SlideDeck
 from app.domain.interfaces import ImageAssetPipeline
+from app.services.image_prompts import (
+    extract_positive_keywords,
+    generate_content_related_safe_prompt,
+    generate_cta_prompt,
+    generate_curious_slide_prompt,
+    generate_news_slide_prompt,
+    generate_safe_news_prompt,
+    sanitize_prompt,
+    sanitize_revised_prompt,
+)
 
 
 @dataclass
@@ -58,26 +68,78 @@ class DefaultImageAssetPipeline(ImageAssetPipeline):
     def process(
         self, deck: SlideDeck, payload: IntakePayload, article_images: Optional[list[str]] = None
     ) -> List[ImageAsset]:
-        # Prioritize article images if available
-        if article_images:
-            # ArticleImageProvider is defined later in this file, so we reference it directly
-            # Since it's in the same module, we can use it without import
-            provider = ArticleImageProvider(article_images)  # type: ignore[name-defined]
-        else:
-            provider = self._select_provider(payload)
-        
+        logger = logging.getLogger(__name__)
+        # Use both print and logging to ensure visibility
+        print(f"\n{'='*60}")
+        print(f"🖼️ IMAGE PIPELINE CALLED")
+        print(f"Mode: {getattr(payload.mode, 'value', str(payload.mode))}")
+        print(f"Image Source: {payload.image_source}")
+        print(f"Slide Count: {payload.slide_count}")
+        print(f"Article Images: {len(article_images) if article_images else 0}")
+        print(f"{'='*60}\n")
+        logger.warning(
+            "🖼️ Image pipeline called: mode=%s image_source=%s slide_count=%s article_images=%s",
+            getattr(payload.mode, "value", str(payload.mode)),
+            payload.image_source,
+            payload.slide_count,
+            len(article_images) if article_images else 0,
+        )
+        # ALWAYS respect user's image_source selection (like before)
+        # Article images are NOT used automatically - they're just metadata
+        # User's explicit choice (ai, pexels, custom) takes priority
+        provider = self._select_provider(payload)
+
         if provider is None:
+            print(f"\n❌ NO IMAGE PROVIDER SELECTED for image_source={payload.image_source}\n")
+            logger.warning("🖼️ No image provider selected for image_source=%s", payload.image_source)
             return []
 
+        provider_name = getattr(provider, "source", type(provider).__name__)
+        print(f"✅ Using image provider: {provider_name}")
+        logger.warning("🖼️ Using image provider: %s", provider_name)
         contents = provider.generate(deck, payload)
+        print(f"✅ Provider {provider_name} generated {len(contents)} image contents\n")
+        logger.warning("🖼️ Provider %s generated %d image contents", provider_name, len(contents))
         assets: List[ImageAsset] = []
         for content in contents:
-            assets.append(self._storage.store(content=content, source=provider.source))
+            try:
+                # Avoid letting a single failed store wipe all images
+                assets.append(self._storage.store(content=content, source=provider.source))
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "🖼️ Failed to store image for placeholder_id=%s source=%s: %s",
+                    getattr(content, "placeholder_id", "unknown"),
+                    getattr(provider, "source", "unknown"),
+                    exc,
+                    exc_info=True,
+                )
         return assets
 
     def _select_provider(self, payload: IntakePayload) -> Optional[ImageProvider]:
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "🖼️ Selecting image provider for image_source=%s mode=%s",
+            payload.image_source,
+            getattr(payload.mode, "value", str(payload.mode)),
+        )
         for provider in self._providers:
-            if provider.supports(payload):
+            try:
+                supports = provider.supports(payload)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "🖼️ Provider %s.supports() raised %s: %s",
+                    getattr(provider, "source", type(provider).__name__),
+                    type(exc).__name__,
+                    exc,
+                )
+                continue
+            logger.warning(
+                "🖼️ Provider %s.supports(image_source=%s) -> %s",
+                getattr(provider, "source", type(provider).__name__),
+                payload.image_source,
+                supports,
+            )
+            if supports:
                 return provider
         return None
 
@@ -120,134 +182,22 @@ class AIImageProvider:
         
         AIImageProvider._last_request_time = time.time()
 
-    def _extract_positive_keywords(self, text: str) -> list[str]:
-        """Extract only positive, safe keywords from text."""
-        import re
-        logger = logging.getLogger(__name__)
-        
-        if not text:
-            return []
-        
-        # Common positive, safe keywords for news
-        positive_keywords_list = [
-            "technology", "innovation", "development", "progress", "growth", "success", 
-            "achievement", "discovery", "research", "science", "education", "learning", 
-            "knowledge", "information", "news", "media", "journalism", "reporting", 
-            "story", "article", "update", "announcement", "event", "meeting", 
-            "conference", "launch", "release", "product", "service", "business", 
-            "economy", "market", "trade", "investment", "finance", "health", 
-            "wellness", "sports", "entertainment", "culture", "art", "music", 
-            "travel", "food", "nature", "environment", "city", "country", 
-            "world", "global", "local", "community", "people", "team", 
-            "organization", "company", "industry", "project", "program", 
-            "initiative", "improvement", "advancement", "breakthrough", 
-            "celebration", "award", "recognition", "support", "cooperation", 
-            "collaboration", "partnership", "agreement", "peace", "harmony"
-        ]
-        
-        # Extract words that match positive keywords
-        words = re.findall(r'\b\w+\b', text.lower())
-        positive_words = [word for word in words if word in positive_keywords_list]
-        
-        # Remove duplicates and limit to top 3-5
-        unique_words = list(dict.fromkeys(positive_words))[:5]
-        
-        return unique_words
-    
+    # Prompt generation methods now delegate to image_prompts module
     def _sanitize_prompt(self, text: str) -> str:
         """Sanitize prompt by extracting only positive keywords and concepts."""
-        import re
         logger = logging.getLogger(__name__)
-        
-        if not text:
-            return "professional news illustration"
-        
-        # Extract positive keywords first
-        positive_keywords = self._extract_positive_keywords(text)
-        
-        # Remove ALL negative/problematic words and phrases
-        negative_patterns = [
-            r'\b(violence|attack|death|kill|murder|crime|war|conflict|disaster|tragedy|accident|injury|harm|danger|threat|fear|panic|chaos|destruction|damage|loss|failure|error|mistake|problem|issue|complaint|protest|riot|strike|dispute|scandal|corruption|fraud|theft|robbery|assault|abuse|exploitation|discrimination|hate|anger|rage|fury|outrage|controversy|criticism|blame|fault|guilt|shame|embarrassment|humiliation|insult|offense|disrespect|disgrace|shameful|disgusting|horrible|terrible|awful|bad|evil|wicked|sinful|immoral|unethical|illegal|unlawful|criminal|violent|aggressive|hostile|dangerous|harmful|toxic|poisonous|deadly|fatal|lethal|destructive|damaging|negative|pessimistic|depressing|sad|unhappy|miserable|hopeless|desperate|despair|grief|sorrow|pain|suffering|agony|torment|torture|oppression|injustice|inequality|prejudice|bias|racism|sexism|homophobia|xenophobia|hatred|intolerance|bigotry|extremism|terrorism|radicalism|fanaticism|fundamentalism)\b',
-        ]
-        
-        # Remove negative words
-        sanitized = text
-        for pattern in negative_patterns:
-            sanitized = re.sub(pattern, '', sanitized, flags=re.IGNORECASE)
-        
-        # Clean up extra spaces
-        sanitized = re.sub(r'\s+', ' ', sanitized).strip()
-        
-        # If we have positive keywords, use them
-        if positive_keywords:
-            safe_prompt = f"{', '.join(positive_keywords)}, professional news illustration, positive, informative, clean, modern"
-            logger.info(f"Extracted positive keywords: {positive_keywords}")
-            return safe_prompt
-        
-        # If too much was removed or no positive keywords, use generic safe prompt
-        if len(sanitized) < len(text) * 0.3 or not sanitized:
-            logger.warning(f"Prompt heavily sanitized, using generic safe prompt. Original: {text[:100]}")
-            return self._generate_safe_news_prompt()
-        
-        # Use sanitized text with safe modifiers
-        return f"{sanitized[:100]}, professional news illustration, positive, informative, clean, modern"
+        result = sanitize_prompt(text, fallback_fn=lambda: generate_safe_news_prompt())
+        if extract_positive_keywords(text):
+            logger.info(f"Extracted positive keywords: {extract_positive_keywords(text)}")
+        return result
     
     def _generate_safe_news_prompt(self, topic: str = None, slide_index: int = None) -> str:
-        """Generate a very simple, safe, positive news-related image prompt.
-        
-        Args:
-            topic: Optional topic to incorporate (will be sanitized)
-            slide_index: Optional slide index to ensure variation
-        """
-        # Use very simple, generic prompts that are guaranteed to pass content filters
-        # Different prompts for different slide positions to ensure variety
-        simple_safe_prompts = [
-            "abstract geometric shapes in blue and white",
-            "modern minimalist design with soft colors",
-            "professional business illustration",
-            "clean abstract composition with warm tones",
-            "contemporary design elements in neutral colors",
-            "simple geometric patterns in pastel colors",
-            "minimalist abstract art with professional aesthetic",
-            "modern design with clean lines and soft lighting",
-            "abstract composition with vibrant but safe colors",
-            "professional graphic design with geometric elements",
-            "contemporary illustration with positive energy",
-            "clean modern aesthetic with balanced composition",
-            "abstract visual design with professional quality",
-            "minimalist art with contemporary style",
-            "simple geometric design with harmonious colors"
-        ]
-        
-        # Use slide_index to select different prompts for different slides
-        # This ensures each slide gets a different image even with safe prompts
-        if slide_index is not None:
-            prompt_idx = slide_index % len(simple_safe_prompts)
-            base_prompt = simple_safe_prompts[prompt_idx]
-        else:
-            import random
-            base_prompt = random.choice(simple_safe_prompts)
-        
-        # Add variation based on slide position to ensure different images
-        variation_modifiers = [
-            "with blue color scheme",
-            "with warm lighting",
-            "with modern design elements",
-            "with professional atmosphere",
-            "with clean minimalist style",
-            "with contemporary aesthetics",
-            "with vibrant colors",
-            "with soft natural lighting"
-        ]
-        
-        if slide_index is not None:
-            variation = variation_modifiers[slide_index % len(variation_modifiers)]
-        else:
-            import random
-            variation = random.choice(variation_modifiers)
-        
-        # Don't add topic if it might cause issues - keep it very simple
-        return f"{base_prompt}, {variation}, professional, clean, modern, positive, informative, high quality"
+        """Generate a very simple, safe, positive news-related image prompt."""
+        return generate_safe_news_prompt(topic, slide_index)
+
+    def _generate_content_related_safe_prompt(self, topic: str = None, original_prompt: str = None, simpler: bool = False) -> str:
+        """Generate a safe, positive prompt that's still related to the original content."""
+        return generate_content_related_safe_prompt(topic, original_prompt, simpler)
 
     def _generate_alt_texts_for_slides(self, slides, payload) -> dict[int, str]:
         """Generate alt_texts automatically from slide content using LLM if available.
@@ -271,6 +221,7 @@ class AIImageProvider:
         for idx, slide in enumerate(slides):
             try:
                 # Generate alt_text from slide content
+                # CRITICAL: Image prompts must ALWAYS be in English, regardless of story language
                 system_prompt = """You are an expert at creating visual image prompts for AI image generation. 
 Generate concise, descriptive alt text (image prompts) that are:
 - Visual and descriptive (1-2 sentences)
@@ -278,12 +229,15 @@ Generate concise, descriptive alt text (image prompts) that are:
 - Focus on visual elements, colors, style, composition
 - Safe, positive, and family-friendly
 - No text, logos, or watermarks mentioned
-- Professional and modern aesthetic"""
+- Professional and modern aesthetic
+- ALWAYS in English (regardless of the story content language)
+
+IMPORTANT: The image prompt must be in English only, even if the slide content is in another language."""
                 
                 mode_context = "educational story" if payload.mode.value == "curious" else "news story"
                 category_context = f"Category: {payload.category}" if payload.category else ""
                 
-                user_prompt = f"""Generate a descriptive image prompt (alt text) for this slide content.
+                user_prompt = f"""Generate a descriptive image prompt (alt text) in ENGLISH ONLY for this slide content.
 
 Slide Content: {slide.text or 'Visual concept'}
 Mode: {mode_context}
@@ -306,17 +260,58 @@ Alt Text:"""
                     alt_texts[idx] = alt_text
                     logger.info(f"✅ Generated alt_text for slide {idx}: {alt_text[:80]}...")
                 else:
-                    # Fallback to slide text
-                    alt_texts[idx] = slide.text or "Visual concept"
-                    logger.warning(f"⚠️ Empty alt_text generated for slide {idx}, using slide text as fallback")
+                    # Fallback: Convert non-English slide text to English description
+                    fallback_text = slide.text or "Visual concept"
+                    alt_texts[idx] = self._convert_to_english_fallback(fallback_text, payload)
+                    logger.warning(f"⚠️ Empty alt_text generated for slide {idx}, using converted fallback")
                     
             except Exception as e:
-                logger.warning(f"⚠️ Failed to generate alt_text for slide {idx}: {e}, using slide text as fallback")
-                # Fallback to slide text
-                alt_texts[idx] = slide.text or "Visual concept"
+                logger.warning(f"⚠️ Failed to generate alt_text for slide {idx}: {e}, using converted fallback")
+                # Fallback: Convert non-English slide text to English description
+                fallback_text = slide.text or "Visual concept"
+                alt_texts[idx] = self._convert_to_english_fallback(fallback_text, payload)
         
         logger.info(f"✅ Generated {len(alt_texts)} alt_texts automatically")
         return alt_texts
+    
+    def _convert_to_english_fallback(self, text: str, payload) -> str:
+        """Convert non-English text to English description for image prompt fallback."""
+        if not text or text == "Visual concept":
+            return "Visual concept"
+        
+        # Check if we need to convert (get language from payload metadata if available)
+        lang_code = "en"
+        if payload.metadata and "language" in payload.metadata:
+            lang_code = payload.metadata["language"].split("-")[0] if "-" in payload.metadata["language"] else payload.metadata["language"]
+        elif hasattr(payload, "language") and payload.language:
+            lang_code = payload.language.split("-")[0] if "-" in payload.language else payload.language
+        
+        # If English or no language model, return as is
+        if lang_code == "en" or not self._language_model:
+            return text
+        
+        # Convert non-English content to English description
+        try:
+            convert_prompt = f"""Convert this content to a brief English description for an image prompt (max 30 words).
+Content: {text[:200]}
+Original Language: {lang_code}
+
+Return only the English description that captures the visual essence, no quotes or labels."""
+            
+            english_desc = self._language_model.complete(
+                "You are a translator. Convert content to English descriptions for image generation.",
+                convert_prompt
+            ).strip().strip('"').strip("'")
+            
+            if english_desc and len(english_desc) > 10:
+                return english_desc
+            else:
+                return "Visual concept"
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to convert fallback text to English: {e}")
+            return "Visual concept"
 
     def generate(self, deck: SlideDeck, payload: IntakePayload) -> Sequence[ImageContent]:
         contents: list[ImageContent] = []
@@ -345,47 +340,33 @@ Alt Text:"""
                     continue
                 
                 # Add delay between requests (except first)
+                # Reduced delays slightly but kept enough for rate limiting
                 if idx > 0:
                     if idx == 1:
-                        delay = 5.0  # Delay after cover
+                        delay = 3.0  # Delay after cover (reduced from 5.0)
                     else:
-                        delay = 8.0  # Delay between subsequent requests
+                        delay = 6.0  # Delay between subsequent requests (reduced from 8.0)
                     logger.info("⏳ Waiting %.1f seconds before generating image for slide %d...", delay, idx)
                     time.sleep(delay)
                 
-                # Create prompt - sanitize and make positive
-                # Extract only positive elements from slide text
+                # Create prompt using prompts module
                 slide_text = (slide.text or 'Visual concept')[:200]
-                safe_text = self._sanitize_prompt(slide_text)
+                is_cover = (idx == 0)
+                is_cta = (idx == max_idx - 1)
                 
-                # Add slide-specific variation to ensure different images for each slide
-                # This helps DALL-E generate unique images even with similar content
-                slide_variations = [
-                    "with blue and white color scheme",
-                    "with warm orange and yellow tones",
-                    "with green and teal accents",
-                    "with purple and blue gradient",
-                    "with red and orange highlights",
-                    "with cool gray and blue palette",
-                    "with vibrant multicolor design",
-                    "with soft pastel colors",
-                    "with bold primary colors",
-                    "with elegant monochrome style"
-                ]
-                variation = slide_variations[idx % len(slide_variations)]
+                # Get article content from payload metadata if available (for News mode)
+                article_content = None
+                if payload.metadata and "article_content" in payload.metadata:
+                    article_content = payload.metadata["article_content"]
+                    logger.info(f"📰 Using article content for slide {idx} image generation ({len(article_content)} chars)")
                 
-                # Don't add prompt_keywords - they might contain negative words
-                # Just use sanitized text with safe modifiers and slide-specific variation
-                # Special handling for cover and CTA
-                if idx == 0:
-                    # Cover slide
-                    prompt = f"{safe_text}, professional news cover illustration, {variation}, positive, informative, clean, modern, unique design"
-                elif idx == max_idx - 1:
-                    # CTA slide (last slide)
-                    prompt = f"{safe_text}, professional news CTA illustration, {variation}, positive, informative, clean, modern, call-to-action, unique design"
-                else:
-                    # Middle slides - add slide number for uniqueness
-                    prompt = f"{safe_text}, professional news illustration for slide {idx + 1}, {variation}, positive, informative, clean, modern, unique design"
+                prompt = generate_news_slide_prompt(
+                    slide_text, 
+                    idx, 
+                    is_cover=is_cover, 
+                    is_cta=is_cta,
+                    article_content=article_content
+                )
                 
                 try:
                     image_content = self._generate_image(slide.placeholder_id, prompt)
@@ -398,8 +379,26 @@ Alt Text:"""
                     # Only use last_successful_image if fallback generation also fails
                     logger.info("🔄 Generating unique safe fallback image for slide %d (index %d)", idx + 1, idx)
                     try:
-                        # Use slide index to ensure unique prompt even for fallback
-                        safe_prompt = self._generate_safe_news_prompt(slide_text, slide_index=idx)
+                        # Use content-related fallback that still uses article content for theme relevance
+                        # This ensures fallback images are still related to the article theme
+                        # and negative content is converted to positive (via generate_news_slide_prompt)
+                        if article_content:
+                            # Use shorter article snippet for fallback (400 chars) to keep it simple
+                            # generate_news_slide_prompt will handle negative-to-positive conversion
+                            fallback_article_snippet = article_content[:400]
+                            safe_prompt = generate_news_slide_prompt(
+                                slide_text,
+                                idx,
+                                is_cover=is_cover,
+                                is_cta=is_cta,
+                                article_content=fallback_article_snippet  # Shorter snippet for fallback
+                            )
+                            logger.info(f"🔄 Using article content in fallback for slide {idx} (theme-based)")
+                        else:
+                            # Fallback to simple safe prompt if no article content
+                            safe_prompt = self._generate_safe_news_prompt(slide_text, slide_index=idx)
+                            logger.info(f"🔄 Using generic safe prompt for slide {idx} (no article content)")
+                        
                         fallback_content = self._generate_image(slide.placeholder_id, safe_prompt)
                         contents.append(fallback_content)
                         last_successful_image = fallback_content
@@ -414,15 +413,8 @@ Alt Text:"""
                             fallback_content.placeholder_id = slide.placeholder_id
                             contents.append(fallback_content)
                         else:
-                            # Last resort: create placeholder content
-                            logger.error("❌ All fallback options exhausted for slide %d", idx + 1)
-                            placeholder_content = ImageContent(
-                                placeholder_id=slide.placeholder_id,
-                                content=b"",  # Empty - will use default image
-                                filename=f"{slide.placeholder_id}.png",
-                                description="Placeholder - will use default image"
-                            )
-                            contents.append(placeholder_content)
+                            # Last resort: skip this slide (don't append empty bytes that can break storage)
+                            logger.error("❌ All fallback options exhausted for slide %d; skipping image", idx + 1)
             
             logger.info("📊 Total images generated: %d (expected: %d)", len(contents), payload.slide_count)
         else:
@@ -500,10 +492,13 @@ Alt Text:"""
                 if user_provided_keywords:
                     # User provided keywords - use them in prompt (user preference)
                     if payload.mode.value == "curious":
-                        if idx == 0:
-                            prompt = f"Cover for educational story: {slide.text or 'Learning'} — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette; inclusive, family-friendly; no text/logos/watermarks; no real-person likeness. | keywords: {prompt_keywords}"
+                        # Convert non-English slide text to English first, then add keywords
+                        english_desc = self._convert_to_english_fallback(slide.text or 'Learning', payload)
+                        if english_desc == "Visual concept" or not english_desc or len(english_desc) < 10:
+                            base_prompt = generate_curious_slide_prompt('Learning', is_cover=(idx == 0))
                         else:
-                            prompt = f"{slide.text or 'Visual concept'} — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette; inclusive, family-friendly; no text/logos/watermarks; no real-person likeness. | keywords: {prompt_keywords}"
+                            base_prompt = f"{english_desc} — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette; inclusive, family-friendly; no text/logos/watermarks; no real-person likeness."
+                        prompt = f"{base_prompt} | keywords: {prompt_keywords}"
                     else:
                         # For News mode, use slide text with user keywords
                         prompt = f"{slide.text or 'Visual concept'} | keywords: {prompt_keywords}"
@@ -513,16 +508,18 @@ Alt Text:"""
                     prompt = alt_texts[idx]
                     logger.info(f"✅ Using auto-generated alt text for slide {idx} ({slide.placeholder_id}): {prompt[:100]}...")
                 else:
-                    # Fallback: generate prompt from slide content
+                    # Fallback: convert non-English content to English description for image prompt
+                    fallback_text = slide.text or 'Learning'
                     if payload.mode.value == "curious":
-                        if idx == 0:
-                            prompt = f"Cover for educational story: {slide.text or 'Learning'} — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette; inclusive, family-friendly; no text/logos/watermarks; no real-person likeness."
-                        else:
-                            prompt = f"{slide.text or 'Visual concept'} — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette; inclusive, family-friendly; no text/logos/watermarks; no real-person likeness."
+                        # For Curious mode, convert non-English slide text to English description
+                        prompt = self._convert_to_english_fallback(fallback_text, payload)
+                        if prompt == "Visual concept" or not prompt:
+                            # If conversion failed, use generic safe prompt
+                            prompt = generate_curious_slide_prompt('Learning', is_cover=(idx == 0))
                     else:
                         # For News mode, use slide text only (no keywords if not provided)
-                        prompt = f"{slide.text or 'Visual concept'}"
-                    logger.warning(f"⚠️ Alt text not found for slide {idx} ({slide.placeholder_id}), using fallback prompt")
+                        prompt = f"{fallback_text or 'Visual concept'}"
+                    logger.warning(f"⚠️ Alt text not found for slide {idx} ({slide.placeholder_id}), using converted fallback prompt")
                 
                 try:
                     logger.debug(f"🖼️ Generating image for slide {idx} with prompt: {prompt[:150]}...")
@@ -559,15 +556,8 @@ Alt Text:"""
                                 fallback_content.placeholder_id = slide.placeholder_id
                                 contents.append(fallback_content)
                             else:
-                                # Last resort: placeholder
-                                logger.error(f"❌ All fallback options exhausted for slide {idx}")
-                                placeholder_content = ImageContent(
-                                    placeholder_id=slide.placeholder_id,
-                                    content=b"",
-                                    filename=f"{slide.placeholder_id}.png",
-                                    description="Placeholder - will use default image"
-                                )
-                                contents.append(placeholder_content)
+                                # Last resort: skip (don't append empty bytes that can break storage)
+                                logger.error(f"❌ All fallback options exhausted for slide {idx}; skipping image")
             
             # For Curious mode, generate CTA slide image separately (CTA is not in deck.slides)
             if payload.mode.value == "curious":
@@ -579,8 +569,8 @@ Alt Text:"""
                 logger.info(f"⏳ Waiting {delay:.1f} seconds before generating CTA image (rate limit protection)...")
                 time.sleep(delay)
                 
-                # Generate CTA-specific prompt
-                cta_prompt = "Educational story call-to-action slide — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette, positive learning theme, inclusive, family-friendly; no text/logos/watermarks; no real-person likeness"
+                # Generate CTA-specific prompt using prompts module
+                cta_prompt = generate_cta_prompt(mode=payload.mode.value)
                 
                 try:
                     logger.debug(f"🖼️ Generating CTA image with prompt: {cta_prompt[:150]}...")
@@ -608,14 +598,8 @@ Alt Text:"""
                             logger.info(f"✅ Generated unique fallback image for CTA slide")
                         except Exception as cta_fallback_exc:
                             logger.error(f"❌ CTA fallback generation also failed: {cta_fallback_exc}")
-                            # Last resort: placeholder
-                            cta_placeholder_content = ImageContent(
-                                placeholder_id=cta_placeholder_id,
-                                content=b"",
-                                filename=f"{cta_placeholder_id}.png",
-                                description="Placeholder - will use default image"
-                            )
-                            contents.append(cta_placeholder_content)
+                            # Last resort: skip (template will fall back to default image)
+                            logger.error("❌ CTA fallback exhausted; skipping CTA image")
             
             logger.info(f"📊 Total images generated: {len(contents)} (expected: {total_slides_needed} for {payload.mode.value} mode)")
         return contents
@@ -670,27 +654,48 @@ Alt Text:"""
                 elif e.response.status_code == 400 and attempt < retry_count - 1:
                     # Check if it's content policy violation
                     error_code = None
+                    revised_prompt = None
                     try:
                         error_data = e.response.json()
                         error_code = error_data.get("error", {}).get("code", "")
+                        # Try to extract revised_prompt from error response (Azure provides this)
+                        inner_error = error_data.get("error", {}).get("inner_error", {})
+                        revised_prompt = inner_error.get("revised_prompt")
                     except:
                         pass
                     
                     if error_code == "content_policy_violation":
-                        # Progressive fallback: use simpler prompts on each retry
+                        # Progressive fallback: use revised_prompt first, then content-related safe prompts
                         if attempt == 0:
-                            # First retry: use safe news prompt
-                            logger.warning("Content policy violation detected (attempt %d/%d), using safe positive news prompt", attempt + 1, retry_count)
-                            safe_prompt = self._generate_safe_news_prompt()
-                            body["prompt"] = safe_prompt
+                            if revised_prompt:
+                                # Use Azure's revised prompt (sanitize and shorten it first)
+                                logger.warning(
+                                    "Content policy violation detected (attempt %d/%d), using sanitized Azure revised prompt",
+                                    attempt + 1,
+                                    retry_count,
+                                )
+                                body["prompt"] = sanitize_revised_prompt(revised_prompt)
+                            else:
+                                # Generate safe prompt related to original content
+                                logger.warning("Content policy violation detected (attempt %d/%d), generating content-related safe prompt", attempt + 1, retry_count)
+                                # Extract topic from original prompt for context
+                                original_topic = prompt.split(",")[0].strip()[:50] if prompt else None
+                                safe_prompt = self._generate_content_related_safe_prompt(original_topic, prompt)
+                                body["prompt"] = safe_prompt
                         elif attempt == 1:
-                            # Second retry: use very simple generic prompt
-                            logger.warning("Content policy violation still occurring (attempt %d/%d), using very simple generic prompt", attempt + 1, retry_count)
-                            body["prompt"] = "abstract geometric design, clean, modern, professional"
+                            # Second retry: use simpler content-related prompt
+                            logger.warning("Content policy violation still occurring (attempt %d/%d), using simpler content-related prompt", attempt + 1, retry_count)
+                            original_topic = prompt.split(",")[0].strip()[:30] if prompt else None
+                            safe_prompt = self._generate_content_related_safe_prompt(original_topic, prompt, simpler=True)
+                            body["prompt"] = safe_prompt
                         else:
-                            # Last retry: use minimal prompt
-                            logger.warning("Content policy violation persists (attempt %d/%d), using minimal safe prompt", attempt + 1, retry_count)
-                            body["prompt"] = "abstract design"
+                            # Last retry: use minimal but still content-aware prompt
+                            logger.warning("Content policy violation persists (attempt %d/%d), using minimal content-aware prompt", attempt + 1, retry_count)
+                            original_topic = prompt.split(",")[0].strip()[:20] if prompt else None
+                            if original_topic:
+                                body["prompt"] = f"professional illustration about {original_topic}, clean, modern, positive"
+                            else:
+                                body["prompt"] = "professional news illustration, clean, modern, positive"
                     else:
                         # For other 400 errors, try with a simpler prompt
                         logger.warning("400 Bad Request on attempt %d/%d, trying simpler prompt", attempt + 1, retry_count)

@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from app.domain.dto import IntakePayload, LanguageMetadata
 from app.domain.interfaces import LanguageDetectionService
+from app.services.language_request_detector import detect_language_request
 
 
 DetectResult = Tuple[str, float]
@@ -87,6 +88,31 @@ class DefaultLanguageDetectionService(LanguageDetectionService):
 
     def detect(self, payload: IntakePayload) -> LanguageMetadata:
         aggregated = self._aggregate_text(payload)
+        
+        # FIRST: Check for explicit language requests in user input
+        # This takes priority over automatic detection
+        explicit_lang = None
+        if payload.text_prompt:
+            explicit_lang = detect_language_request(payload.text_prompt)
+        if not explicit_lang and payload.notes:
+            explicit_lang = detect_language_request(payload.notes)
+        
+        # If explicit language request found, use it (high confidence)
+        if explicit_lang:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"🌐 Detected explicit language request: {explicit_lang}")
+            try:
+                return LanguageMetadata(
+                    language_code=explicit_lang,
+                    confidence=0.95,  # High confidence for explicit requests
+                    source_text_preview=self._preview(aggregated.text)
+                )
+            except ValidationError as exc:
+                logger.warning(f"Invalid explicit language code {explicit_lang}, falling back to detection")
+                # Fall through to normal detection
+        
+        # Normal language detection flow (if no explicit request found)
         if aggregated.is_empty:
             return LanguageMetadata(language_code=self._default_language, confidence=0.0)
 

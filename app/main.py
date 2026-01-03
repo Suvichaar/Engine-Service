@@ -55,6 +55,16 @@ app = FastAPI(title="NewsLab Service v2")
 # Add custom exception handler for better error messages
 from fastapi.responses import JSONResponse
 
+@app.on_event("startup")
+async def startup_event():
+    """Initialize orchestrator at startup to show config logs immediately."""
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning("🚀 Application startup - initializing orchestrator...")
+    # Force initialization to show config logs
+    get_orchestrator()
+    logger.warning("✅ Orchestrator initialized successfully")
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     """Global exception handler to return detailed error messages."""
@@ -160,22 +170,29 @@ def get_orchestrator() -> StoryOrchestrator:
     if settings.ai_image and not (
         is_placeholder_value(settings.ai_image.endpoint) or is_placeholder_value(settings.ai_image.api_key)
     ):
-        logging.info(f"✅ Initializing AIImageProvider with endpoint: {settings.ai_image.endpoint[:50]}...")
+        logger.warning("✅ Initializing AIImageProvider with endpoint: %s...", settings.ai_image.endpoint[:80])
         image_providers.append(
             AIImageProvider(
-                endpoint=settings.ai_image.endpoint, 
+                endpoint=settings.ai_image.endpoint,
                 api_key=settings.ai_image.api_key,
-                language_model=language_model  # Pass language_model for automatic alt_text generation
+                language_model=language_model,  # Pass language_model for automatic alt_text generation
             )
         )
     else:
-        logging.warning("❌ AIImageProvider not initialized - missing ai_image configuration")
+        logger.warning("❌ AIImageProvider not initialized - missing ai_image configuration")
     if settings.pexels and not is_placeholder_value(settings.pexels.api_key):
+        logger.warning("✅ Initializing PexelsImageProvider")
         image_providers.append(PexelsImageProvider(api_key=settings.pexels.api_key))
+    else:
+        logger.warning("❌ PexelsImageProvider not initialized - missing pexels configuration")
     image_providers.append(UserUploadProvider())
     # Add NewsDefaultImageProvider for News mode when no image_source is specified
     from app.services.image_pipeline import NewsDefaultImageProvider
     image_providers.append(NewsDefaultImageProvider())
+    logger.warning(
+        "📷 Registered image providers: %s",
+        [getattr(p, 'source', type(p).__name__) for p in image_providers],
+    )
 
     resize_map = {}
     if settings.image_processing and settings.image_processing.resize_variants:
@@ -397,6 +414,16 @@ def _load_from_azure_blob(blob_url: str, logger: logging.Logger) -> Optional[byt
 
 @app.post("/stories", response_model=StoryResponse)
 def create_story(request: StoryCreateRequest, orchestrator: StoryOrchestrator = Depends(get_orchestrator)):
+    logger = logging.getLogger(__name__)
+    logger.warning("📥 Received story request: mode=%s image_source=%s voice_engine=%s", 
+                   request.mode.value, request.image_source, request.voice_engine)
+    print(f"\n{'='*60}")
+    print(f"📥 BACKEND RECEIVED REQUEST:")
+    print(f"Mode: {request.mode.value}")
+    print(f"Image Source: {request.image_source}")
+    print(f"Voice Engine: {request.voice_engine}")
+    print(f"Slide Count: {request.slide_count}")
+    print(f"{'='*60}\n")
     try:
         record = orchestrator.create_story(request)
         # HTML is already rendered and saved in orchestrator.create_story()
@@ -458,20 +485,34 @@ def healthcheck():
 @app.get("/stories/{story_id}/html")
 def get_story_html(story_id: str, orchestrator: StoryOrchestrator = Depends(get_orchestrator)):
     """Get rendered HTML for a story."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     try:
+        logger.info(f"🔍 Getting HTML for story_id: {story_id}")
         record = orchestrator.get_story(story_id)
+        logger.info(f"✅ Story found: template_key={record.template_key}, mode={record.mode}")
+        
         if not orchestrator.html_renderer:
+            logger.error("❌ HTML renderer not available")
             raise HTTPException(status_code=503, detail="HTML renderer not available")
 
+        logger.info(f"🔍 Rendering HTML with template_key={record.template_key}, template_source=file")
         html_content = orchestrator.html_renderer.render(
             record=record,
             template_key=record.template_key,
             template_source="file",
         )
+        logger.info(f"✅ HTML rendered successfully, length={len(html_content)}")
         return {"html": html_content, "story_id": story_id, "template_key": record.template_key}
     except KeyError as exc:
+        logger.error(f"❌ Story not found: {story_id}")
         raise HTTPException(status_code=404, detail="Story not found") from exc
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as exc:
+        logger.error(f"❌ HTML rendering failed for story_id={story_id}: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"HTML rendering failed: {str(exc)}") from exc
 
 

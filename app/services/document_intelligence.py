@@ -77,16 +77,42 @@ class DefaultDocumentIntelligencePipeline(DocumentIntelligencePipeline):
 
     def run(self, job_request: StructuredJobRequest) -> DocInsights:
         insights = DocInsights()
+        logger = logging.getLogger(__name__)
 
         # Process URLs first (extract article content)
         if job_request.url_list and self._url_extractor:
+            logger.warning(f"🔍 ===== DOCUMENT INTELLIGENCE: Processing {len(job_request.url_list)} URL(s) =====")
+            logger.warning(f"🔍 URL List: {[str(url) for url in job_request.url_list]}")
+            extraction_successful = False
             for url in job_request.url_list:
                 url_str = str(url)
+                logger.warning(f"🔍 ===== STARTING EXTRACTION FOR URL =====")
+                logger.warning(f"🔍 URL: {url_str}")
+                logger.warning(f"🔍 URL Extractor available: {self._url_extractor is not None}")
                 try:
                     result = self._url_extractor.extract(url_str)
                     if result:
+                        extraction_successful = True
+                        # Validate that we got actual content
+                        if not result.text or len(result.text.strip()) < 50:
+                            logger.error(f"❌ Article extraction returned insufficient content for URL: {url_str} (text_length={len(result.text) if result.text else 0})")
+                            logger.error(f"❌ Title extracted: {result.title[:100] if result.title else 'None'}")
+                            continue
+                        
+                        # CRITICAL: Log extracted content to verify it matches the URL (using WARNING level so it shows in logs)
+                        logger.warning(f"✅ Article extracted successfully:")
+                        logger.warning(f"   URL: {url_str}")
+                        logger.warning(f"   Title: {result.title[:100]}")
+                        logger.warning(f"   Text length: {len(result.text)}")
+                        logger.warning(f"   Summary length: {len(result.summary)}")
+                        
                         chunks = self._url_extractor.to_semantic_chunks(result, url_str)
-                        insights.semantic_chunks.extend(chunks)
+                        if chunks:
+                            insights.semantic_chunks.extend(chunks)
+                            logger.warning(f"✅ Added {len(chunks)} semantic chunk(s) from URL: {url_str}")
+                        else:
+                            logger.warning(f"⚠️ No semantic chunks created from URL: {url_str}")
+                        
                         # Store article images in metadata for later use
                         if insights.metadata is None:
                             insights.metadata = {}
@@ -97,12 +123,40 @@ class DefaultDocumentIntelligencePipeline(DocumentIntelligencePipeline):
                         # Also store all images
                         if result.images:
                             insights.metadata["article_images"].extend(result.images[:5])  # Limit to 5
+                    else:
+                        # CRITICAL: If extraction returns None (validation failed), raise exception
+                        error_msg = f"Article extraction FAILED or was REJECTED for URL: {url_str}. This usually means wrong content was extracted (e.g., chess URL but Delhi pollution content). Story generation ABORTED to prevent incorrect stories."
+                        logger.error(f"❌ ===== CRITICAL: Article extraction returned None =====")
+                        logger.error(f"❌ URL: {url_str}")
+                        logger.error(f"❌ {error_msg}")
+                        logger.error(f"❌ RAISING EXCEPTION to prevent wrong story generation!")
+                        raise ValueError(error_msg)
+                except ValueError:
+                    # Re-raise ValueError (validation errors)
+                    raise
                 except Exception as e:
-                    # Log error but continue processing
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.warning("Failed to process URL %s: %s", url_str, e, exc_info=True)
+                    # Log error but continue processing for other exceptions
+                    logger.error(f"❌ ===== CRITICAL: Failed to process URL =====")
+                    logger.error(f"❌ URL: {url_str}")
+                    logger.error(f"❌ Error: {e}", exc_info=True)
+                    # For other exceptions, we continue, but for ValueError (validation), we raise
                     continue
+            
+            # Check if we got any semantic chunks from URLs
+            if job_request.url_list and not insights.semantic_chunks:
+                error_msg = f"CRITICAL ERROR: No content extracted from {len(job_request.url_list)} URL(s). URLs: {[str(url) for url in job_request.url_list]}. This will cause incorrect story generation. Please check the URLs and ensure article extraction is working."
+                logger.error(f"❌ ===== CRITICAL ERROR =====")
+                logger.error(f"❌ {error_msg}")
+                logger.error(f"❌ URLs attempted: {[str(url) for url in job_request.url_list]}")
+                logger.error(f"❌ RAISING EXCEPTION to prevent wrong story generation!")
+                raise ValueError(error_msg)
+            
+            # Also check if extraction was attempted but failed
+            if job_request.url_list and not extraction_successful:
+                error_msg = f"CRITICAL ERROR: Article extraction failed for all {len(job_request.url_list)} URL(s). URLs: {[str(url) for url in job_request.url_list]}. Cannot generate story without content."
+                logger.error(f"❌ ===== CRITICAL ERROR: EXTRACTION FAILED =====")
+                logger.error(f"❌ {error_msg}")
+                raise ValueError(error_msg)
 
         if job_request.text_input:
             insights.semantic_chunks.append(
