@@ -121,6 +121,25 @@ class StoryOrchestrator:
                 extracted_text = first_chunk.text.lower() if first_chunk.text else ""
                 extracted_title = first_chunk.metadata.get("title", "").lower() if first_chunk.metadata else ""
                 
+                # LANGUAGE-AGNOSTIC: Check if content is in Hindi/Unicode (same logic as url_extractor.py)
+                # Get original title (not lowercased) for Unicode detection
+                original_title = first_chunk.metadata.get("title", "") if first_chunk.metadata else ""
+                is_hindi_or_unicode = any(
+                    '\u0900' <= char <= '\u097F' or  # Devanagari (Hindi, Marathi, etc.)
+                    '\u0980' <= char <= '\u09FF' or  # Bengali
+                    '\u0A00' <= char <= '\u0A7F' or  # Gurmukhi (Punjabi)
+                    '\u0A80' <= char <= '\u0AFF' or  # Gujarati
+                    '\u0B00' <= char <= '\u0B7F' or  # Oriya
+                    '\u0B80' <= char <= '\u0BFF' or  # Tamil
+                    '\u0C00' <= char <= '\u0C7F' or  # Telugu
+                    '\u0C80' <= char <= '\u0CFF' or  # Kannada
+                    '\u0D00' <= char <= '\u0D7F'     # Malayalam
+                    for char in original_title
+                )
+                
+                if is_hindi_or_unicode:
+                    logger.warning("🌐 Final Validation: Detected Hindi/Unicode content - validation will be skipped")
+                
                 logger.warning(f"🔍 FINAL VALIDATION: Checking URL-content match")
                 logger.warning(f"🔍 Extracted title: {extracted_title[:100]}")
                 logger.warning(f"🔍 Extracted text preview: {extracted_text[:200]}")
@@ -162,13 +181,21 @@ class StoryOrchestrator:
                         actual_unique_matches = len(unique_matches)
                         match_ratio = actual_unique_matches / len(top_url_keywords) if top_url_keywords else 0
                         
-                        # STRICT VALIDATION: Require at least 2-3 unique keywords to match
+                        # ADAPTIVE VALIDATION: Skip for Hindi/Unicode content, strict for English
+                        if is_hindi_or_unicode:
+                            # For Hindi/Unicode content: Skip validation entirely
+                            # Hindi titles don't match English URL keywords
+                            logger.warning("🌐 Final Validation: Hindi/Unicode content detected - skipping URL-content match check")
+                            logger.warning("✅ Final Validation: Hindi/Unicode content accepted (validation skipped)")
+                            continue  # Skip validation for this URL, move to next or proceed
+                        
+                        # STRICT VALIDATION: Require at least 2-3 unique keywords to match (only for English)
                         min_required_matches = max(2, min(3, len(top_url_keywords) // 3))
                         
                         logger.warning(f"🔍 Final Validation: URL keywords={top_url_keywords[:5]}")
                         logger.warning(f"🔍 Final Validation: Unique matches={actual_unique_matches}/{len(top_url_keywords)}, Match ratio={match_ratio*100:.1f}%, Required={min_required_matches}")
                         
-                        # CRITICAL: Reject if match ratio is very low OR not enough unique matches
+                        # CRITICAL: Reject if match ratio is very low OR not enough unique matches (only for English)
                         if len(top_url_keywords) >= 3:
                             if match_ratio < 0.1 or actual_unique_matches < min_required_matches:
                                 error_msg = f"CRITICAL MISMATCH DETECTED: URL keywords do not match extracted content. URL: {url_str}. Extracted title: {extracted_title[:100]}. URL keywords: {top_url_keywords}. Unique matches: {actual_unique_matches}/{len(top_url_keywords)} (required: {min_required_matches}). Match ratio: {match_ratio*100:.1f}% (expected >10%). This indicates wrong article was extracted. Story generation ABORTED."
@@ -549,7 +576,12 @@ class StoryOrchestrator:
         """
         Build canonical URLs for the story.
         
-        For News and Curious modes: Uses title-based slug + nano ID format
+        For News and Curious modes: Uses title-based slug + date/time UUID format
+        Matching JavaScript createSlugWithUUID function:
+        - Slug from title (lowercase, hyphens, alphanumeric only)
+        - UUID from date/time: ddmmyyhhminssms (14 digits)
+        - Format: {slug}_{uuid}
+        
         For other modes: Uses story_id format
         
         Args:
@@ -559,54 +591,92 @@ class StoryOrchestrator:
         
         Returns:
             Tuple of (canurl, canurl1)
-            - canurl: Primary URL (without .html for News/Curious modes)
-            - canurl1: Secondary URL (with .html for News/Curious modes, saved to S3)
+            - canurl: Primary URL (without .html) - https://suvichaar.org/stories/{slug}_{uuid}
+            - canurl1: Secondary URL (with .html) - https://suvichaar.org/stories/{slug}_{uuid}.html
         """
-        if not self.story_base_url:
-            return None, None
+        logger = logging.getLogger(__name__)
         
-        # For News and Curious modes, use title-based slug + nano ID format
-        if mode in [Mode.NEWS, Mode.CURIOUS] and story_title:
+        # For News and Curious modes, ALWAYS use title-based slug + date/time UUID format
+        if mode in [Mode.NEWS, Mode.CURIOUS]:
             try:
-                # Generate slug from title
-                slug = self._slugify_title(story_title)
+                # Step 1: Generate slug from title
+                if story_title and story_title.strip():
+                    slug = self._slugify_title(story_title)
+                    
+                    # Double-check: Ensure slug is not empty (safety net)
+                    if not slug or slug.strip() == '':
+                        logger.warning("Slug is empty after slugification, using hash fallback")
+                        title_hash = hashlib.md5(story_title.encode('utf-8')).hexdigest()[:8]
+                        slug = f"story-{title_hash}"
+                else:
+                    # No title provided, use story_id as fallback slug
+                    logger.warning("No story_title provided, using story_id as slug fallback")
+                    slug = f"story-{str(story_id).replace('-', '')[:16]}"
                 
-                # Double-check: Ensure slug is not empty (safety net)
-                if not slug or slug.strip() == '':
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.warning("Slug is empty after slugification, using hash fallback")
-                    title_hash = hashlib.md5(story_title.encode('utf-8')).hexdigest()[:8]
-                    slug = f"story-{title_hash}"
+                # Step 2: Generate UUID based on current date and time
+                # Format: ddmmyyhhminssms (14 digits)
+                # Matching JavaScript: dd + mm + yy + hh + min + ss + ms
+                now = datetime.now()
+                dd = f"{now.day:02d}"           # Day (2 digits, zero-padded)
+                mm = f"{now.month:02d}"          # Month (2 digits, zero-padded)
+                yy = f"{now.year % 100:02d}"     # Year (last 2 digits, zero-padded)
+                hh = f"{now.hour:02d}"           # Hour (2 digits, zero-padded)
+                min_str = f"{now.minute:02d}"    # Minute (2 digits, zero-padded)
+                ss = f"{now.second:02d}"         # Second (2 digits, zero-padded)
+                ms = f"{now.microsecond // 1000:03d}"  # Milliseconds (3 digits, zero-padded)
                 
-                # Generate Nano ID (matching JavaScript Canurl function)
-                alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-'
-                size = 10
-                nano_id = ''.join(random.choices(alphabet, k=size))
-                nano = nano_id + "_G"
+                uuid_str = f"{dd}{mm}{yy}{hh}{min_str}{ss}{ms}"
                 
-                slug_nano = f"{slug}_{nano}"
+                # Step 3: Concatenate slug and UUID (no "_G" suffix)
+                slug_uuid = f"{slug}_{uuid_str}"
+                
+                # ALWAYS use hardcoded base URL: https://suvichaar.org/stories
+                base_url = "https://suvichaar.org/stories"
                 
                 # canurl: without .html extension (for display)
-                # Format: https://suvichaar.org/stories/slug_nano
-                canurl = f"https://suvichaar.org/stories/{slug_nano}"
+                canurl = f"{base_url}/{slug_uuid}"
                 
                 # canurl1: with .html extension (for S3 storage)
-                # Format: https://suvichaar.org/stories/slug_nano.html
-                canurl1 = f"https://suvichaar.org/stories/{slug_nano}.html"
+                canurl1 = f"{base_url}/{slug_uuid}.html"
                 
+                logger.info(f"✅ Generated URLs: canurl={canurl}, canurl1={canurl1}")
                 return canurl, canurl1
+                
             except Exception as e:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning("Failed to generate title-based URLs, falling back to UUID: %s", e)
-                # Fallback to UUID-based URLs
+                logger.error("Failed to generate title-based URLs: %s", e, exc_info=True)
+                # Even on exception, try to generate URLs with minimal info
+                try:
+                    now = datetime.now()
+                    dd = f"{now.day:02d}"
+                    mm = f"{now.month:02d}"
+                    yy = f"{now.year % 100:02d}"
+                    hh = f"{now.hour:02d}"
+                    min_str = f"{now.minute:02d}"
+                    ss = f"{now.second:02d}"
+                    ms = f"{now.microsecond // 1000:03d}"
+                    uuid_str = f"{dd}{mm}{yy}{hh}{min_str}{ss}{ms}"
+                    
+                    slug = f"story-{str(story_id).replace('-', '')[:16]}"
+                    slug_uuid = f"{slug}_{uuid_str}"
+                    base_url = "https://suvichaar.org/stories"
+                    
+                    canurl = f"{base_url}/{slug_uuid}"
+                    canurl1 = f"{base_url}/{slug_uuid}.html"
+                    
+                    logger.warning(f"⚠️ Generated URLs with fallback: canurl={canurl}, canurl1={canurl1}")
+                    return canurl, canurl1
+                except Exception as e2:
+                    logger.error("Complete failure in URL generation: %s", e2, exc_info=True)
+                    return None, None
         
-        # Fallback for other modes: use story_id format
-        base = self.story_base_url.rstrip("/")
-        primary = f"{base}/{story_id}"
-        secondary = f"{primary}?variant=alt"
-        return primary, secondary
+        # Fallback for other modes: use story_id format (if story_base_url is available)
+        if self.story_base_url:
+            base = self.story_base_url.rstrip("/")
+            primary = f"{base}/{story_id}"
+            secondary = f"{primary}?variant=alt"
+            return primary, secondary
+        
+        return None, None
     
     def _slugify_title(self, title: str) -> str:
         """

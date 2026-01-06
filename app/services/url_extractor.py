@@ -128,6 +128,29 @@ class URLContentExtractor:
             # This catches cases where title might be in English but content is wrong
             content_text = f"{title_lower} {text_lower[:2000]}"  # Check first 2000 chars of text
             
+            # Check if content is in Hindi/Unicode (Devanagari and other Indian scripts)
+            # This is important because Hindi titles won't match English URL keywords
+            is_hindi_or_unicode = any(
+                '\u0900' <= char <= '\u097F' or  # Devanagari (Hindi, Marathi, etc.)
+                '\u0980' <= char <= '\u09FF' or  # Bengali
+                '\u0A00' <= char <= '\u0A7F' or  # Gurmukhi (Punjabi)
+                '\u0A80' <= char <= '\u0AFF' or  # Gujarati
+                '\u0B00' <= char <= '\u0B7F' or  # Oriya
+                '\u0B80' <= char <= '\u0BFF' or  # Tamil
+                '\u0C00' <= char <= '\u0C7F' or  # Telugu
+                '\u0C80' <= char <= '\u0CFF' or  # Kannada
+                '\u0D00' <= char <= '\u0D7F'     # Malayalam
+                for char in title
+            )
+            
+            # Check if text is actually extracted (not just placeholder)
+            text_is_empty = not text or len(text.strip()) < 50 or "no article content" in text.lower()
+            
+            if is_hindi_or_unicode:
+                self._logger.warning("🌐 Detected Hindi/Unicode content - validation will be skipped")
+            if text_is_empty:
+                self._logger.warning("⚠️ Text is empty or too short - using relaxed validation")
+            
             # Check overlap: How many URL keywords appear in content?
             if url_keywords:
                 # Get top 10 most relevant URL keywords (longer words are more specific)
@@ -148,22 +171,32 @@ class URLContentExtractor:
                 # Match ratio based on unique matches (more accurate)
                 match_ratio = actual_unique_matches / len(top_url_keywords) if top_url_keywords else 0
                 
-                # STRICT VALIDATION: Require at least 2-3 unique keywords to match
-                # For URLs with 3-5 keywords: require at least 2 matches
-                # For URLs with 6+ keywords: require at least 25% (minimum 2)
-                min_required_matches = max(2, min(3, len(top_url_keywords) // 3))
+                # ADAPTIVE VALIDATION: Adjust requirements based on content language and text availability
+                if is_hindi_or_unicode:
+                    # For Hindi/Unicode content: Skip validation entirely
+                    # Hindi titles don't match English URL keywords
+                    min_required_matches = 0  # Don't require any matches for Hindi
+                    match_ratio_threshold = 0.0  # No threshold for Hindi (accept all)
+                    self._logger.warning("🌐 Hindi content: Validation disabled (accepting article)")
+                elif text_is_empty:
+                    # If text is empty, rely more on title and be lenient
+                    min_required_matches = 1  # Require only 1 match
+                    match_ratio_threshold = 0.05  # 5% threshold
+                    self._logger.warning("⚠️ Empty text: Using relaxed validation (1 match required)")
+                else:
+                    # For English content with proper text: Use strict validation
+                    min_required_matches = max(2, min(3, len(top_url_keywords) // 3))
+                    match_ratio_threshold = 0.1  # 10% threshold
                 
                 self._logger.warning("🔍 VALIDATION: URL keywords=%s", top_url_keywords[:5])
                 self._logger.warning("🔍 VALIDATION: Title matches=%d, Text matches=%d, Unique matches=%d/%d", 
                                    title_matches, text_matches, actual_unique_matches, len(top_url_keywords))
-                self._logger.warning("🔍 VALIDATION: Match ratio=%.1f%%, Required=%d unique matches", 
-                                   match_ratio * 100, min_required_matches)
+                self._logger.warning("🔍 VALIDATION: Match ratio=%.1f%%, Required=%d unique matches (threshold=%.1f%%)", 
+                                   match_ratio * 100, min_required_matches, match_ratio_threshold * 100)
                 
-                # CRITICAL: Reject if:
-                # 1. Match ratio is very low (<10%) AND we have 3+ keywords, OR
-                # 2. Not enough unique keywords match (stricter requirement)
-                if len(top_url_keywords) >= 3:
-                    if match_ratio < 0.1 or actual_unique_matches < min_required_matches:
+                # CRITICAL: Reject only for English content if validation fails
+                if len(top_url_keywords) >= 3 and not is_hindi_or_unicode:
+                    if match_ratio < match_ratio_threshold or actual_unique_matches < min_required_matches:
                         self._logger.error("❌ ===== IMMEDIATE REJECTION: URL-CONTENT MISMATCH =====")
                         self._logger.error("❌ URL: %s", url)
                         self._logger.error("❌ Extracted Title: %s", title[:100])
@@ -171,8 +204,8 @@ class URLContentExtractor:
                         self._logger.error("❌ URL keywords: %s", top_url_keywords)
                         self._logger.error("❌ Title matches: %d, Text matches: %d, Unique matches: %d", 
                                          title_matches, text_matches, actual_unique_matches)
-                        self._logger.error("❌ Match ratio: %.1f%% (expected >10%%), Required: %d unique matches (got %d)", 
-                                         match_ratio * 100, min_required_matches, actual_unique_matches)
+                        self._logger.error("❌ Match ratio: %.1f%% (expected >%.1f%%), Required: %d unique matches (got %d)", 
+                                         match_ratio * 100, match_ratio_threshold * 100, min_required_matches, actual_unique_matches)
                         self._logger.error("❌ This indicates wrong article was extracted (caching/mismatch issue)")
                         self._logger.error("❌ REJECTING to prevent wrong story generation")
                         return None
@@ -180,7 +213,10 @@ class URLContentExtractor:
                         self._logger.warning("✅ URL-content validation passed (%.1f%% match, %d unique matches, required %d)", 
                                            match_ratio * 100, actual_unique_matches, min_required_matches)
                 else:
-                    self._logger.warning("⚠️ Too few URL keywords (%d) for strict validation, accepting", len(top_url_keywords))
+                    if is_hindi_or_unicode:
+                        self._logger.warning("✅ Hindi/Unicode content - validation skipped, accepting article")
+                    else:
+                        self._logger.warning("⚠️ Too few URL keywords (%d) for strict validation, accepting", len(top_url_keywords))
             
             # CRITICAL: Log extracted content for debugging (using WARNING level so it shows in logs)
             self._logger.warning("🔍 Extracted Title: %s", title[:100] if title else "None")
@@ -188,14 +224,30 @@ class URLContentExtractor:
             self._logger.warning("🔍 First 200 chars of text: %s", text[:200] if text else "None")
             
             # CRITICAL: Validate that we got actual content
-            # If text is empty or too short, extraction likely failed
-            if not text or text == "No article content available." or len(text.strip()) < 50:
-                self._logger.error("❌ ===== ARTICLE EXTRACTION FAILED =====")
-                self._logger.error("❌ URL: %s", url)
-                self._logger.error("❌ Title extracted: %s", title[:100] if title else "None")
-                self._logger.error("❌ Text length: %d", len(text) if text else 0)
-                self._logger.error("❌ This will cause incorrect story generation!")
-                return None  # Return None instead of empty result
+            # LANGUAGE-AGNOSTIC: For non-English content, text extraction often fails due to encoding/JS rendering
+            # If text is empty or too short, check if we can use title as fallback
+            text_too_short = not text or text == "No article content available." or len(text.strip()) < 50
+            
+            if text_too_short:
+                # For Hindi/Unicode content with a valid title, use title as text fallback
+                # This handles cases where newspaper3k can't extract body text from dynamic sites
+                if is_hindi_or_unicode and title and len(title.strip()) > 20:
+                    self._logger.warning("⚠️ Non-English article: Text extraction failed but title is valid, using title as content")
+                    # Use title as text - LLM will generate story based on title
+                    text = title
+                    # Continue processing with title as text
+                elif title and len(title.strip()) > 30:
+                    # For English content with good title but no text, also try title fallback
+                    self._logger.warning("⚠️ Text extraction failed but title is valid (>30 chars), using title as content")
+                    text = title
+                else:
+                    # No valid title or title too short - reject completely
+                    self._logger.error("❌ ===== ARTICLE EXTRACTION FAILED =====")
+                    self._logger.error("❌ URL: %s", url)
+                    self._logger.error("❌ Title extracted: %s", title[:100] if title else "None")
+                    self._logger.error("❌ Text length: %d", len(text) if text else 0)
+                    self._logger.error("❌ Both title and text are insufficient for story generation!")
+                    return None  # Return None instead of empty result
             
             # Use textblob for better text processing and summary
             try:

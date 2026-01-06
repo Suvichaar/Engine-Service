@@ -762,56 +762,358 @@ class PexelsImageProvider:
     """Fetch royalty-free images from Pexels."""
 
     source = "pexels"
+    _pexel_tags: List[str] = []  # Class variable to store Pexels tags
+    _tags_loaded: bool = False  # Flag to track if tags are loaded
 
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
+        # Load Pexels tags on first initialization
+        if not PexelsImageProvider._tags_loaded:
+            self._load_pexel_tags()
 
     def supports(self, payload: IntakePayload) -> bool:
         return payload.image_source == "pexels"
 
-    def _extract_keywords_from_text(self, text: str, max_keywords: int = 2) -> List[str]:
-        """Extract 1-2 main keywords from slide text for Pexels search.
+    def _translate_to_english(self, text: str) -> Optional[str]:
+        """Translate non-English text to English using Azure OpenAI.
+        
+        Works for ANY language (Hindi, Marathi, Tamil, Telugu, Bengali, Gujarati, 
+        Kannada, Malayalam, Punjabi, Urdu, Odia, Japanese, Chinese, Arabic, etc.)
         
         Args:
-            text: Slide text content
-            max_keywords: Maximum number of keywords to extract
+            text: Text in any language
             
         Returns:
-            List of keywords (1-2 words) for Pexels search
+            Translated English text, or None if translation fails
         """
+        logger = logging.getLogger(__name__)
+        
+        try:
+            from app.config import get_settings
+            settings = get_settings()
+            
+            # Check if Azure OpenAI is configured
+            if not settings.azure_api or not settings.azure_api.api_key:
+                logger.debug("Azure OpenAI not configured, skipping translation")
+                return None
+            
+            # Limit text length for API call (first 200 chars for faster processing)
+            text_snippet = text[:200] if len(text) > 200 else text
+            
+            # Translation prompt - works for ANY language
+            prompt = f"""Translate this text to English. The text may be in any language (Hindi, Marathi, Tamil, Telugu, Bengali, Gujarati, Kannada, Malayalam, Punjabi, Urdu, Odia, Japanese, Chinese, Arabic, French, Spanish, or any other language).
+Return only the English translation, no explanations:
+
+{text_snippet}"""
+
+            url = f"{settings.azure_api.endpoint.rstrip('/')}/openai/deployments/{settings.azure_api.deployment}/chat/completions"
+            params = {"api-version": settings.azure_api.api_version}
+            headers = {
+                "api-key": settings.azure_api.api_key,
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "messages": [
+                    {"role": "system", "content": "You are a translator. Translate text from any language to English. Return only the translated text."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,
+                "max_tokens": 200,
+            }
+            
+            import httpx
+            with httpx.Client(timeout=10.0) as client:
+                response = client.post(url, params=params, headers=headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                
+                choices = data.get("choices", [])
+                if choices:
+                    translated = choices[0]["message"].get("content", "").strip()
+                    # Clean up: take first line only, remove quotes
+                    translated = translated.split('\n')[0].strip().strip('"').strip("'")
+                    if translated and len(translated) > 5:
+                        logger.info(f"✅ Translation successful: {text[:50]}... → {translated[:50]}...")
+                        return translated
+            
+            logger.warning("Translation returned empty result")
+            return None
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Translation failed: {e}", exc_info=False)
+            return None
+
+    def _load_pexel_tags(self) -> None:
+        """Load Pexels tags from pexel_tags.txt file."""
+        import os
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Try multiple locations for pexel_tags.txt
+            possible_paths = []
+            
+            # 1. Project root (3 levels up from app/services/image_pipeline.py)
+            current_file = os.path.abspath(__file__)
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file)))
+            possible_paths.append(os.path.join(project_root, "pexel_tags.txt"))
+            
+            # 2. Current working directory
+            possible_paths.append(os.path.join(os.getcwd(), "pexel_tags.txt"))
+            
+            # 3. Same directory as this file
+            possible_paths.append(os.path.join(os.path.dirname(current_file), "pexel_tags.txt"))
+            
+            tags_file = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    tags_file = path
+                    break
+            
+            if tags_file:
+                with open(tags_file, 'r', encoding='utf-8') as f:
+                    PexelsImageProvider._pexel_tags = [line.strip().lower() for line in f if line.strip()]
+                PexelsImageProvider._tags_loaded = True
+                logger.info(f"✅ Loaded {len(PexelsImageProvider._pexel_tags)} Pexels tags from {tags_file}")
+            else:
+                logger.warning(f"⚠️ pexel_tags.txt not found in any of these locations: {possible_paths}, will use direct keyword matching")
+                PexelsImageProvider._pexel_tags = []
+                PexelsImageProvider._tags_loaded = True  # Mark as loaded to avoid repeated attempts
+        except Exception as e:
+            logger.error(f"❌ Failed to load pexel_tags.txt: {e}", exc_info=True)
+            PexelsImageProvider._pexel_tags = []
+            PexelsImageProvider._tags_loaded = True  # Mark as loaded to avoid repeated attempts
+
+    def _match_keywords_with_pexel_tags(self, keywords: List[str], max_matches: int = 10) -> List[str]:
+        """Match extracted keywords with Pexels tags using relevance scoring.
+        
+        CRITICAL: Filters out generic keywords and tags to avoid generic images.
+        
+        Args:
+            keywords: List of keywords extracted from slide text
+            max_matches: Maximum number of matched tags to return
+            
+        Returns:
+            List of matched Pexels tags sorted by relevance score (generic tags excluded)
+        """
+        logger = logging.getLogger(__name__)
+        
+        if not PexelsImageProvider._pexel_tags:
+            logger.debug("No Pexels tags loaded, returning filtered keywords")
+            # Filter generic keywords even if tags not loaded
+            generic_keywords_to_exclude = {
+                "news", "article", "story", "media", "report", "update", "world", 
+                "today", "latest", "information", "newspaper", "magazine", "journalism"
+            }
+            filtered = [kw for kw in keywords if kw.lower() not in generic_keywords_to_exclude]
+            return filtered[:max_matches] if filtered else keywords[:max_matches]
+        
+        # CRITICAL FIX: Filter out generic keywords that lead to generic images
+        generic_keywords_to_exclude = {
+            "news", "article", "story", "media", "report", "update", "world", 
+            "today", "latest", "information", "newspaper", "magazine", "journalism"
+        }
+        
+        # Filter: Keep only specific, meaningful keywords (at least 4 chars)
+        specific_keywords = [
+            kw for kw in keywords 
+            if kw.lower() not in generic_keywords_to_exclude and len(kw) >= 4
+        ]
+        
+        if not specific_keywords:
+            logger.warning(f"⚠️ All keywords are generic: {keywords[:5]}..., skipping tag matching to avoid generic images")
+            return []  # Return empty to force fallback
+        
+        logger.info(f"🔍 Filtered {len(keywords)} → {len(specific_keywords)} specific keywords: {specific_keywords[:5]}...")
+        
+        scored_matches = []
+        
+        # Only match specific keywords
+        for keyword in specific_keywords:
+            keyword_lower = keyword.lower()
+            
+            for tag in PexelsImageProvider._pexel_tags:
+                tag_lower = tag.lower()
+                
+                # CRITICAL: Also exclude generic tags from results
+                if tag_lower in generic_keywords_to_exclude:
+                    continue  # Skip generic tags
+                
+                score = 0
+                
+                # Exact match: highest score
+                if keyword_lower == tag_lower:
+                    score = 100
+                # Keyword is substring of tag (e.g., "cricket" in "cricket field")
+                elif keyword_lower in tag_lower:
+                    score = 80 - (len(tag_lower) - len(keyword_lower)) * 2  # Penalize longer tags
+                # Tag is substring of keyword (e.g., "sport" in "sports")
+                elif tag_lower in keyword_lower:
+                    score = 70 - (len(keyword_lower) - len(tag_lower)) * 2
+                # Word overlap: check if words match
+                elif any(word == tag_lower for word in keyword_lower.split()) or \
+                     any(word == keyword_lower for word in tag_lower.split()):
+                    score = 60
+                # Partial match: check if significant portion matches
+                elif len(keyword_lower) >= 4 and keyword_lower[:4] in tag_lower:
+                    score = 40
+                elif len(tag_lower) >= 4 and tag_lower[:4] in keyword_lower:
+                    score = 40
+                else:
+                    continue  # Skip if no match
+                
+                # Avoid duplicates
+                if tag not in [m[1] for m in scored_matches]:
+                    scored_matches.append((score, tag))
+        
+        # Sort by score (descending) and return top matches
+        scored_matches.sort(key=lambda x: x[0], reverse=True)
+        matched_tags = [tag for score, tag in scored_matches[:max_matches]]
+        
+        # If we have matched tags, use them; otherwise use filtered specific keywords
+        if matched_tags:
+            logger.info(f"🎯 Matched {len(matched_tags)} specific Pexels tags: {matched_tags[:5]}...")
+            return matched_tags
+        else:
+            logger.warning(f"⚠️ No specific tag matches found, using filtered keywords")
+            return specific_keywords[:max_matches] if specific_keywords else []
+
+    def _extract_keywords_from_text(self, text: str, max_keywords: int = 10) -> List[str]:
+        """Extract multiple keywords from slide text for Pexels search.
+        
+        CRITICAL FIX: Translates non-English text to English first, then extracts keywords.
+        Works for ANY language (Hindi, Marathi, Tamil, Telugu, Bengali, Gujarati, etc.)
+        
+        Args:
+            text: Slide text content (can be in any language)
+            max_keywords: Maximum number of keywords to extract (default: 10)
+            
+        Returns:
+            List of specific keywords (generic keywords filtered out) for Pexels search
+        """
+        logger = logging.getLogger(__name__)
+        
+        # Default fallback keywords (only used if translation fails completely)
+        generic_fallbacks = ["news", "article", "story", "media", "report", "update", "world", "today", "latest", "information"]
+        
         if not text:
-            return ["news"]  # Default fallback
+            logger.info("📝 No text provided")
+            return []  # Return empty, let matching logic handle fallback
         
         import re
         
-        # Simple approach: Extract first 1-2 meaningful words
-        # Remove common stop words
+        # Check if text is primarily non-English (any language: Hindi, Tamil, Japanese, Arabic, etc.)
+        # Count ASCII letters vs total word characters
+        ascii_letters = len(re.findall(r'[a-zA-Z]', text))
+        total_word_chars = len(re.findall(r'\w', text))  # All word characters (letters, digits, underscore)
+        
+        # CRITICAL FIX: Translate non-English text to English first
+        is_non_english = total_word_chars > 0 and (ascii_letters / total_word_chars) < 0.5
+        
+        if is_non_english:
+            ascii_ratio = (ascii_letters / total_word_chars) * 100
+            logger.info("🌐 Non-English text detected (%.1f%% ASCII), translating to English for keyword extraction...", ascii_ratio)
+            
+            # Translate to English
+            translated_text = self._translate_to_english(text)
+            
+            if translated_text and len(translated_text) > 10:
+                logger.info(f"✅ Translation successful: {text[:50]}... → {translated_text[:100]}...")
+                text = translated_text  # Use translated text for keyword extraction
+            else:
+                logger.warning("⚠️ Translation failed or returned empty, will try to extract from original text")
+                # Continue with original text - might have some English words
+        
+        # For English text: Extract meaningful keywords
+        # Comprehensive stop words list (expanded)
         stop_words = {
             "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by",
             "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
             "will", "would", "should", "could", "may", "might", "must", "can", "this", "that", "these", "those",
             "it", "its", "they", "them", "their", "we", "our", "you", "your", "he", "she", "his", "her",
-            "from", "as", "if", "when", "where", "why", "how", "what", "which", "who", "whom", "whose"
+            "from", "as", "if", "when", "where", "why", "how", "what", "which", "who", "whom", "whose",
+            "not", "no", "yes", "also", "just", "only", "more", "less", "very", "much", "many", "few",
+            "some", "any", "all", "both", "each", "every", "most", "other", "such", "than", "too",
+            "about", "after", "before", "between", "during", "through", "into", "over", "under",
+            "said", "says", "according", "based", "made", "make", "get", "got", "take", "took",
+            "come", "came", "give", "gave", "know", "knew", "think", "thought", "see", "saw",
+            "want", "need", "use", "used", "find", "found", "tell", "told", "ask", "asked",
+            "seem", "seems", "seemed", "become", "became", "begin", "began", "keep", "kept",
+            "let", "put", "run", "say", "try", "tried", "turn", "turned", "show", "showed",
+            "like", "new", "first", "last", "long", "great", "little", "own", "same", "right",
+            "big", "high", "different", "small", "large", "next", "early", "young", "important"
         }
         
-        # Split text into words, remove punctuation, lowercase
+        # Extract all words (at least 3 chars)
         words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
         
         # Filter out stop words and get unique words
-        keywords = [w for w in words if w not in stop_words]
+        unique_keywords = []
+        seen = set()
+        for w in words:
+            if w not in stop_words and w not in seen and len(w) >= 3:
+                unique_keywords.append(w)
+                seen.add(w)
         
-        # Return first max_keywords or fallback
-        if keywords:
-            return keywords[:max_keywords]
+        # Sort by word length (longer = more specific = better for search)
+        unique_keywords.sort(key=len, reverse=True)
+        
+        # Get top keywords (don't add generic fallbacks - let matching logic handle it)
+        keywords = unique_keywords[:max_keywords]
+        
+        logger.info(f"📝 Extracted {len(keywords)} keywords: {keywords[:5]}...")
+        
+        # Match extracted keywords with Pexels tags for better relevance
+        # This will filter out generic keywords and return specific tags
+        matched_tags = self._match_keywords_with_pexel_tags(keywords, max_matches=max_keywords)
+        
+        # If we got matched tags, use them; otherwise use filtered keywords
+        if matched_tags:
+            logger.info(f"✅ Using {len(matched_tags)} matched Pexels tags: {matched_tags[:5]}...")
+            return matched_tags
         else:
-            # Fallback: use first word from text (if available)
-            first_words = text.split()
-            if first_words:
-                # Take first word, remove punctuation, lowercase
-                first_word = re.sub(r'[^\w]', '', first_words[0].lower())
-                if first_word and len(first_word) >= 3:
-                    return [first_word]
-            return ["news"]  # Ultimate fallback
+            # Return filtered keywords (generic ones already filtered in _match_keywords_with_pexel_tags)
+            logger.debug("No Pexels tag matches, using filtered keywords")
+            # Filter generic keywords here too as fallback
+            generic_keywords_to_exclude = {
+                "news", "article", "story", "media", "report", "update", "world", 
+                "today", "latest", "information", "newspaper", "magazine", "journalism"
+            }
+            filtered = [kw for kw in keywords if kw.lower() not in generic_keywords_to_exclude and len(kw) >= 4]
+            return filtered[:max_keywords] if filtered else []
+
+    def _fetch_image_with_retry(self, placeholder_id: str, keywords: List[str], image_number: int = 0) -> Optional[ImageContent]:
+        """Fetch image from Pexels, trying multiple keywords until successful.
+        
+        FIX: Uses different image_number for each keyword attempt to ensure variety.
+        This prevents same images when multiple slides use same keywords.
+        
+        Args:
+            placeholder_id: Unique identifier for the slide
+            keywords: List of keywords to try (will try each until one works)
+            image_number: Base index of image to fetch from search results
+            
+        Returns:
+            ImageContent if successful, None if all keywords failed
+        """
+        logger = logging.getLogger(__name__)
+        
+        for idx, keyword in enumerate(keywords):
+            try:
+                # CRITICAL FIX: Use image_number + keyword_index to ensure different images
+                # This ensures even if same keyword is used, different slides get different images
+                # Multiply by 3 to create gaps between keyword attempts
+                unique_image_number = image_number + (idx * 3)
+                
+                logger.info(f"🔍 Pexels: Trying keyword {idx+1}/{len(keywords)}: '{keyword}' (image_number={unique_image_number})")
+                result = self._fetch_image(placeholder_id, keyword, unique_image_number)
+                logger.info(f"✅ Pexels: Success with keyword '{keyword}' (got image #{unique_image_number})")
+                return result
+            except Exception as exc:
+                logger.warning(f"⚠️ Pexels: Keyword '{keyword}' failed: {exc}")
+                continue
+        
+        logger.error(f"❌ Pexels: All {len(keywords)} keywords failed for {placeholder_id}")
+        return None
 
     def generate(self, deck: SlideDeck, payload: IntakePayload) -> Sequence[ImageContent]:
         contents: list[ImageContent] = []
@@ -833,20 +1135,22 @@ class PexelsImageProvider:
             if deck.slides:
                 cover_slide = deck.slides[0]
                 if not cover_slide.image_url:
-                    try:
-                        # Priority: User keywords > Automatic extraction
-                        if user_provided_keywords:
-                            query = payload.prompt_keywords[0]
-                            logger.info(f"📝 Pexels cover: Using user-provided keyword: '{query}'")
-                        else:
-                            # Extract keywords from cover slide content automatically
-                            keywords = self._extract_keywords_from_text(cover_slide.text)
-                            query = keywords[0] if keywords else "news"
-                            logger.info(f"📸 Pexels cover: Extracted keywords '{keywords}' from slide text: {cover_slide.text[:50] if cover_slide.text else 'N/A'}...")
-                        contents.append(self._fetch_image(cover_slide.placeholder_id, query, image_number=0))
+                    # Priority: User keywords > Automatic extraction (with 10+ keywords)
+                    if user_provided_keywords:
+                        keywords = list(payload.prompt_keywords)  # Use user keywords as list
+                        logger.info(f"📝 Pexels cover: Using user-provided keywords: {keywords[:5]}")
+                    else:
+                        # Extract 10+ keywords from cover slide content automatically
+                        keywords = self._extract_keywords_from_text(cover_slide.text, max_keywords=10)
+                        logger.info(f"📸 Pexels cover: Extracted {len(keywords)} keywords from slide text")
+                    
+                    # Try all keywords until one works
+                    result = self._fetch_image_with_retry(cover_slide.placeholder_id, keywords, image_number=0)
+                    if result:
+                        contents.append(result)
                         logger.info("✅ Generated Pexels cover image (index 0)")
-                    except Exception as exc:
-                        logger.warning("Pexels fetch failed for cover: %s", exc)
+                    else:
+                        logger.warning("⚠️ Pexels: All keywords failed for cover slide")
             
             # Generate images for all remaining slides (middle + CTA)
             # Cover is index 0, so generate images for indices 1 to (slide_count - 1)
@@ -855,50 +1159,62 @@ class PexelsImageProvider:
                 slide = deck.slides[idx]
                 if slide.image_url:
                     continue
-                try:
-                    # Priority: User keywords > Automatic extraction
-                    if user_provided_keywords:
-                        # Use user keywords, but cycle through them for variety
-                        keyword_idx = (idx - 1) % len(payload.prompt_keywords)
-                        query = payload.prompt_keywords[keyword_idx]
-                        logger.info(f"📝 Pexels slide {idx}: Using user-provided keyword: '{query}'")
+                
+                # Priority: User keywords > Automatic extraction (with 10+ keywords)
+                if user_provided_keywords:
+                    # Use user keywords, cycle through them for variety
+                    keywords = list(payload.prompt_keywords)
+                    # Rotate keywords for variety: start from different position for each slide
+                    rotated_keywords = keywords[(idx-1) % len(keywords):] + keywords[:(idx-1) % len(keywords)]
+                    logger.info(f"📝 Pexels slide {idx}: Using user-provided keywords (rotated): {rotated_keywords[:3]}")
+                else:
+                    # Extract 10+ keywords from slide content automatically
+                    keywords = self._extract_keywords_from_text(slide.text, max_keywords=10)
+                    rotated_keywords = keywords
+                    logger.info(f"📸 Pexels slide {idx}: Extracted {len(keywords)} keywords from slide text")
+                
+                # Try all keywords until one works, use different image_number for variety
+                result = self._fetch_image_with_retry(slide.placeholder_id, rotated_keywords, image_number=idx)
+                if result:
+                    contents.append(result)
+                    logger.info("✅ Generated Pexels image for slide %d (index %d)", idx + 1, idx)
+                else:
+                    # Fallback: use last successful image if available
+                    if contents:
+                        from copy import deepcopy
+                        fallback_image = deepcopy(contents[-1])
+                        fallback_image.placeholder_id = slide.placeholder_id
+                        contents.append(fallback_image)
+                        logger.info("🔄 Using fallback (last successful) image for slide %d", idx + 1)
                     else:
-                        # Extract keywords from slide content automatically
-                        keywords = self._extract_keywords_from_text(slide.text)
-                        query = keywords[0] if keywords else "news"
-                        logger.info(f"📸 Pexels slide {idx}: Extracted keywords '{keywords}' from slide text: {slide.text[:50] if slide.text else 'N/A'}...")
-                    # Use different image_number for variety (idx = 1, 2, 3, etc.)
-                    # This ensures each slide gets a different image from Pexels search results
-                    contents.append(self._fetch_image(slide.placeholder_id, query, image_number=idx))
-                    logger.info("✅ Generated Pexels image for slide %d (index %d, image_number=%d)", idx + 1, idx, idx)
-                except Exception as exc:
-                    logger.warning("Pexels fetch failed for slide %d: %s", idx, exc)
+                        logger.warning("⚠️ Pexels: No images available for slide %d", idx + 1)
             
             # For Curious mode, generate CTA slide image separately (CTA is not in deck.slides)
             if payload.mode.value == "curious":
                 cta_placeholder_id = "cta-slide"
                 logger.info("🎯 Generating Pexels CTA slide image for Curious mode (placeholder: %s)", cta_placeholder_id)
-                try:
-                    # Priority: User keywords > Automatic extraction
-                    if user_provided_keywords:
-                        # Use last keyword from user list, or first if only one
-                        query = payload.prompt_keywords[-1] if len(payload.prompt_keywords) > 1 else payload.prompt_keywords[0]
-                        logger.info(f"📝 Pexels CTA: Using user-provided keyword: '{query}'")
+                
+                # Priority: User keywords > Automatic extraction (with 10+ keywords)
+                if user_provided_keywords:
+                    # Use user keywords in reverse order for CTA variety
+                    keywords = list(reversed(payload.prompt_keywords))
+                    logger.info(f"📝 Pexels CTA: Using user-provided keywords (reversed): {keywords[:3]}")
+                else:
+                    # Extract keywords from last slide or use category
+                    if deck.slides:
+                        last_slide = deck.slides[-1]
+                        keywords = self._extract_keywords_from_text(last_slide.text, max_keywords=10)
                     else:
-                        # Extract keywords from last slide or use category
-                        if deck.slides:
-                            last_slide = deck.slides[-1]
-                            keywords = self._extract_keywords_from_text(last_slide.text)
-                        else:
-                            keywords = [payload.category.lower()] if payload.category else ["news"]
-                        query = keywords[0] if keywords else "news"
-                        logger.info(f"📸 Pexels CTA: Extracted keywords '{keywords}' for CTA slide")
-                    # Use a high image_number to get a different image for CTA
-                    cta_image_number = len(deck.slides)  # Use deck.slides length to ensure unique image
-                    contents.append(self._fetch_image(cta_placeholder_id, query, image_number=cta_image_number))
+                        keywords = [payload.category.lower()] if payload.category else ["news", "article", "story"]
+                    logger.info(f"📸 Pexels CTA: Extracted {len(keywords)} keywords for CTA slide")
+                
+                # Use a high image_number to get a different image for CTA
+                cta_image_number = len(deck.slides)
+                result = self._fetch_image_with_retry(cta_placeholder_id, keywords, image_number=cta_image_number)
+                if result:
+                    contents.append(result)
                     logger.info("✅ Generated Pexels CTA slide image (image_number=%d)", cta_image_number)
-                except Exception as exc:
-                    logger.warning("Pexels fetch failed for CTA slide: %s", exc)
+                else:
                     # Fallback: use last successful image if available
                     if contents:
                         from copy import deepcopy
@@ -906,27 +1222,42 @@ class PexelsImageProvider:
                         last_image.placeholder_id = cta_placeholder_id
                         contents.append(last_image)
                         logger.info("🔄 Using last Pexels image as fallback for CTA slide")
+                    else:
+                        logger.warning("⚠️ Pexels: No images available for CTA slide")
         else:
             # Fallback: Original behavior for other modes (if slide_count not provided)
-            logger.warning("slide_count not provided, using fallback behavior")
+            logger.warning("slide_count not provided, using fallback behavior with retry logic")
             for idx, slide in enumerate(deck.slides):
                 if slide.image_url:
                     continue
-                try:
-                    # Priority: User keywords > Automatic extraction
-                    if user_provided_keywords:
-                        keyword_idx = idx % len(payload.prompt_keywords)
-                        query = payload.prompt_keywords[keyword_idx]
-                        logger.info(f"📝 Pexels slide {idx}: Using user-provided keyword: '{query}'")
+                
+                # Priority: User keywords > Automatic extraction (with 10+ keywords)
+                if user_provided_keywords:
+                    keywords = list(payload.prompt_keywords)
+                    # Rotate for variety
+                    rotated_keywords = keywords[idx % len(keywords):] + keywords[:idx % len(keywords)]
+                    logger.info(f"📝 Pexels slide {idx}: Using user-provided keywords (rotated): {rotated_keywords[:3]}")
+                else:
+                    # Extract 10+ keywords from slide content
+                    keywords = self._extract_keywords_from_text(slide.text, max_keywords=10)
+                    rotated_keywords = keywords
+                    logger.info(f"📸 Pexels slide {idx}: Extracted {len(keywords)} keywords from slide text")
+                
+                # Try all keywords until one works
+                result = self._fetch_image_with_retry(slide.placeholder_id, rotated_keywords, image_number=idx)
+                if result:
+                    contents.append(result)
+                    logger.info("✅ Generated Pexels image for slide %d", idx + 1)
+                else:
+                    # Fallback: use last successful image
+                    if contents:
+                        from copy import deepcopy
+                        fallback_image = deepcopy(contents[-1])
+                        fallback_image.placeholder_id = slide.placeholder_id
+                        contents.append(fallback_image)
+                        logger.info("🔄 Using fallback (last successful) image for slide %d", idx + 1)
                     else:
-                        # Extract keywords from slide content automatically
-                        keywords = self._extract_keywords_from_text(slide.text)
-                        query = keywords[0] if keywords else "news"
-                        logger.info(f"📸 Pexels slide {idx}: Extracted keywords '{keywords}' from slide text")
-                    # Use image_number=idx to get different images
-                    contents.append(self._fetch_image(slide.placeholder_id, query, image_number=idx))
-                except Exception as exc:
-                    logger.warning("Pexels fetch failed: %s", exc)
+                        logger.warning("⚠️ Pexels: No images available for slide %d", idx + 1)
         
         expected_count = payload.slide_count if payload.slide_count else len(deck.slides)
         if payload.mode.value == "curious" and payload.slide_count:

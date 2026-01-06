@@ -533,6 +533,9 @@ class NewsModelClient(ModelClient):
         # Extract article text from semantic chunks
         article_text = self._extract_article_text(insights)
         
+        # Filter out negative content - keep only positive/neutral (language-agnostic)
+        article_text = self._filter_positive_content(article_text)
+        
         # CRITICAL LAYER 2: Extract URL from insights and add URL context to force correct topic
         source_url = None
         url_context = ""
@@ -635,6 +638,180 @@ class NewsModelClient(ModelClient):
             headlines=[storytitle],
             bullet_points=narrations[1:] if len(narrations) > 1 else [],
         )
+
+    def _filter_positive_content(self, text: str) -> str:
+        """
+        Language-agnostic filter: Remove negative content (war, attack, violence, etc.) 
+        and keep only positive/neutral content.
+        Works for ANY language by detecting script and using appropriate keywords.
+        """
+        if not text or len(text.strip()) < 50:
+            return text
+        
+        import re
+        logger = logging.getLogger(__name__)
+        
+        # MULTILINGUAL NEGATIVE KEYWORDS - Organized by script/language
+        negative_keywords = {
+            # English (Latin script)
+            'latin': [
+                'war', 'wars', 'warfare', 'battle', 'battles', 'attack', 'attacks', 'attacked', 'attacking',
+                'violence', 'violent', 'kill', 'killed', 'killing', 'death', 'deaths', 'dead', 'died', 'dying',
+                'bomb', 'bombs', 'bombing', 'bombed', 'explosion', 'explosions', 'exploded', 'terror', 'terrorist',
+                'terrorism', 'shooting', 'shot', 'gun', 'guns', 'weapon', 'weapons', 'murder', 'murdered',
+                'assassination', 'assassinated', 'riot', 'riots', 'protest', 'protests', 'blood', 'bloody',
+                'casualties', 'casualty', 'injured', 'injury', 'injuries', 'wounded', 'destruction', 'destroyed',
+                'destroy', 'destroys', 'damage', 'damaged', 'harm', 'harmed', 'crisis', 'crises', 'disaster',
+                'disasters', 'tragedy', 'tragedies', 'accident', 'accidents', 'crash', 'crashes', 'crashed',
+                'fire', 'fires', 'burning', 'burned', 'burnt', 'hate', 'hatred', 'hostile', 'hostility'
+            ],
+            # Hindi (Devanagari script) - Common negative words
+            'devanagari': [
+                'युद्ध', 'हिंसा', 'हत्या', 'मृत्यु', 'मौत', 'आतंक', 'आतंकवाद', 'हमला', 'हमले',
+                'नष्ट', 'तबाही', 'दुर्घटना', 'दुर्घटनाएं', 'खून', 'खूनी', 'हताहत', 'घायल',
+                'विनाश', 'नुकसान', 'क्षति', 'संकट', 'आपदा', 'त्रासदी', 'दुर्घटना', 'दुर्घटनाएं',
+                'आग', 'जलना', 'जला', 'नफरत', 'शत्रुता', 'शत्रुतापूर्ण'
+            ],
+            # Bengali
+            'bengali': [
+                'যুদ্ধ', 'হিংসা', 'হত্যা', 'মৃত্যু', 'মৃত্যু', 'সন্ত্রাস', 'সন্ত্রাসবাদ', 'আক্রমণ',
+                'ধ্বংস', 'বিপর্যয়', 'দুর্ঘটনা', 'রক্ত', 'রক্তাক্ত', 'হতাহত', 'আহত', 'ক্ষতি'
+            ],
+            # Tamil
+            'tamil': [
+                'போர்', 'வன்முறை', 'கொலை', 'மரணம்', 'பயங்கரவாதம்', 'தாக்குதல்', 'அழிவு',
+                'விபத்து', 'இரத்தம்', 'காயம்', 'சேதம்', 'நெருக்கடி', 'விபத்து'
+            ],
+            # Telugu
+            'telugu': [
+                'యుద్ధం', 'హింస', 'హత్య', 'మరణం', 'భయోత్పాతం', 'దాడి', 'వినాశనం',
+                'ప్రమాదం', 'రక్తం', 'గాయం', 'నష్టం', 'సంక్షోభం'
+            ],
+            # Gujarati
+            'gujarati': [
+                'યુદ્ધ', 'હિંસા', 'હત્યા', 'મૃત્યુ', 'આતંક', 'આતંકવાદ', 'હુમલો',
+                'નાશ', 'તબાહી', 'દુર્ઘટના', 'રક્ત', 'ઘાયલ', 'નુકસાન'
+            ],
+            # Kannada
+            'kannada': [
+                'ಯುದ್ಧ', 'ಹಿಂಸೆ', 'ಕೊಲೆ', 'ಮರಣ', 'ಭಯೋತ್ಪಾದನೆ', 'ದಾಳಿ', 'ವಿನಾಶ',
+                'ಅಪಘಾತ', 'ರಕ್ತ', 'ಗಾಯ', 'ನಷ್ಟ', 'ಸಂಕಷ್ಟ'
+            ],
+            # Malayalam
+            'malayalam': [
+                'യുദ്ധം', 'ഹിംസ', 'കൊല', 'മരണം', 'ഭീകരത', 'ആക്രമണം', 'വിനാശം',
+                'അപകടം', 'രക്തം', 'ഗായം', 'നഷ്ടം', 'സംക്ഷോഭം'
+            ],
+            # Punjabi (Gurmukhi)
+            'gurmukhi': [
+                'ਯੁੱਧ', 'ਹਿੰਸਾ', 'ਹੱਤਿਆ', 'ਮੌਤ', 'ਆਤੰਕ', 'ਹਮਲਾ', 'ਨਾਸ਼',
+                'ਤਬਾਹੀ', 'ਦੁਰਘਟਨਾ', 'ਖੂਨ', 'ਘਾਇਲ', 'ਨੁਕਸਾਨ'
+            ],
+            # Urdu (Arabic script) - Common negative words
+            'arabic': [
+                'جنگ', 'تشدد', 'قتل', 'موت', 'دہشت', 'دہشت گردی', 'حملہ', 'تباہی',
+                'حادثہ', 'خون', 'زخمی', 'نقصان', 'بحران'
+            ],
+            # Marathi (Devanagari - same script as Hindi, different words)
+            'marathi': [
+                'युद्ध', 'हिंसा', 'हत्या', 'मृत्यू', 'दहशत', 'हल्ला', 'नाश',
+                'तबाही', 'अपघात', 'रक्त', 'जखमी', 'नुकसान'
+            ]
+        }
+        
+        def detect_script(text: str) -> str:
+            """Detect the primary script used in text."""
+            script_counts = {
+                'latin': 0,
+                'devanagari': 0,
+                'bengali': 0,
+                'tamil': 0,
+                'telugu': 0,
+                'gujarati': 0,
+                'kannada': 0,
+                'malayalam': 0,
+                'gurmukhi': 0,
+                'arabic': 0
+            }
+            
+            for char in text:
+                code = ord(char)
+                if '\u0000' <= char <= '\u007F':  # ASCII/Latin
+                    script_counts['latin'] += 1
+                elif '\u0900' <= char <= '\u097F':  # Devanagari
+                    script_counts['devanagari'] += 1
+                elif '\u0980' <= char <= '\u09FF':  # Bengali
+                    script_counts['bengali'] += 1
+                elif '\u0B80' <= char <= '\u0BFF':  # Tamil
+                    script_counts['tamil'] += 1
+                elif '\u0C00' <= char <= '\u0C7F':  # Telugu
+                    script_counts['telugu'] += 1
+                elif '\u0A80' <= char <= '\u0AFF':  # Gujarati
+                    script_counts['gujarati'] += 1
+                elif '\u0C80' <= char <= '\u0CFF':  # Kannada
+                    script_counts['kannada'] += 1
+                elif '\u0D00' <= char <= '\u0D7F':  # Malayalam
+                    script_counts['malayalam'] += 1
+                elif '\u0A00' <= char <= '\u0A7F':  # Gurmukhi
+                    script_counts['gurmukhi'] += 1
+                elif '\u0600' <= char <= '\u06FF':  # Arabic (Urdu)
+                    script_counts['arabic'] += 1
+            
+            # Return script with highest count
+            detected_script = max(script_counts.items(), key=lambda x: x[1])[0]
+            return detected_script if script_counts[detected_script] > 0 else 'latin'
+        
+        # Detect primary script
+        primary_script = detect_script(text)
+        logger.info(f"🌐 Detected script: {primary_script}")
+        
+        # Get negative keywords for detected script + always include English (common in mixed content)
+        keywords_to_check = set(negative_keywords.get(primary_script, []))
+        keywords_to_check.update(negative_keywords['latin'])  # Always check English too
+        
+        # Split text into sentences (language-agnostic sentence splitting)
+        # Works for: . ! ? । (Devanagari) | (Bengali) | (Tamil) | (Telugu) | (Gujarati) | (Kannada) | (Malayalam) | (Gurmukhi)
+        sentence_endings = r'[.!?।।|॥]\s+'
+        sentences = re.split(sentence_endings, text)
+        
+        filtered_sentences = []
+        filtered_count = 0
+        
+        for sentence in sentences:
+            sentence_stripped = sentence.strip()
+            if not sentence_stripped or len(sentence_stripped) < 10:
+                continue
+            
+            sentence_lower = sentence_stripped.lower()
+            
+            # Check if sentence contains any negative keywords
+            contains_negative = any(
+                keyword.lower() in sentence_lower 
+                for keyword in keywords_to_check 
+                if len(keyword) > 2  # Skip very short keywords to avoid false positives
+            )
+            
+            if not contains_negative:
+                filtered_sentences.append(sentence_stripped)
+            else:
+                filtered_count += 1
+                logger.debug(f"🚫 Filtered negative sentence: {sentence_stripped[:80]}...")
+        
+        # Join filtered sentences
+        filtered_text = '. '.join(filtered_sentences)
+        
+        # Safety check: If too much content was filtered (>70%), keep original (might be false positive)
+        filter_ratio = len(filtered_text) / len(text) if len(text) > 0 else 1.0
+        if filter_ratio < 0.3:  # Less than 30% remaining
+            logger.warning(f"⚠️ Too much content filtered ({len(filtered_text)}/{len(text)} chars, {filter_ratio*100:.1f}%), keeping original to avoid false positives")
+            return text
+        
+        if filtered_count > 0:
+            logger.info(f"✅ Filtered {filtered_count} negative sentences: {len(text)} → {len(filtered_text)} chars ({filter_ratio*100:.1f}% kept)")
+        else:
+            logger.debug(f"✅ No negative content detected, keeping original text")
+        
+        return filtered_text if filtered_text else text
 
     def _extract_article_text(self, insights: DocInsights) -> str:
         """Extract full article text from semantic chunks."""
