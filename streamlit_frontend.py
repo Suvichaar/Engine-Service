@@ -12,6 +12,10 @@ import time
 from typing import Optional, List
 from pathlib import Path
 from datetime import datetime
+import urllib3
+
+# Disable SSL warnings for ngrok free tier
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Try to import boto3 for S3 uploads
 try:
@@ -235,9 +239,24 @@ def create_story(payload: dict, base_url: str = None) -> dict:
     """Call FastAPI to create a story."""
     endpoint = f"{base_url or FASTAPI_BASE_URL}/stories"
     try:
+        # Headers to bypass ngrok browser warning and fix SSL issues
+        headers = {
+            "ngrok-skip-browser-warning": "true",  # Skip ngrok browser warning
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        
         # Increased timeout to 600 seconds (10 minutes) to handle AI image generation
         # which can take time due to API delays and rate limiting
-        response = requests.post(endpoint, json=payload, timeout=600)
+        # Note: verify=False only for ngrok free tier (not recommended for production)
+        response = requests.post(
+            endpoint, 
+            json=payload, 
+            headers=headers,
+            timeout=600,
+            verify=False  # Disable SSL verification for ngrok free tier
+        )
         response.raise_for_status()
         return response.json()
     except requests.exceptions.HTTPError as e:
@@ -255,7 +274,11 @@ def get_story(story_id: str, base_url: str = None) -> dict:
     """Get story details from FastAPI."""
     url = f"{base_url or FASTAPI_BASE_URL}/stories/{story_id}"
     try:
-        response = requests.get(url, timeout=30)
+        headers = {
+            "ngrok-skip-browser-warning": "true",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=30, verify=False)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.HTTPError as e:
@@ -267,7 +290,11 @@ def get_story_html(story_id: str, base_url: str = None) -> str:
     """Get rendered HTML from FastAPI."""
     url = f"{base_url or FASTAPI_BASE_URL}/stories/{story_id}/html"
     try:
-        response = requests.get(url, timeout=30)
+        headers = {
+            "ngrok-skip-browser-warning": "true",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=30, verify=False)
         response.raise_for_status()
         return response.json().get("html", "")
     except requests.exceptions.RequestException as e:

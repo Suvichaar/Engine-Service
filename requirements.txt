@@ -26,6 +26,10 @@ textblob
 streamlit
 requests
 
+# Azure Key Vault integration (for secure secret management)
+azure-keyvault-secrets
+azure-identity
+
 # Testing (optional, for development)
 pytest
 pytest-asyncio

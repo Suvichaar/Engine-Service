@@ -14,6 +14,13 @@ except ModuleNotFoundError:  # pragma: no cover
 
 from pydantic import BaseModel
 
+# Import Azure Key Vault integration (optional, will fail gracefully if not available)
+try:
+    from app.config.azure_keyvault import load_secrets_from_keyvault
+except ImportError:
+    def load_secrets_from_keyvault() -> Dict[str, Any]:
+        return {}
+
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = BASE_DIR.parent / "config" / "settings.toml"
@@ -284,12 +291,24 @@ def _normalize_config(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def load_settings(config_path: Optional[Path] = None) -> AppSettings:
-    """Load settings from a TOML file, overridden by environment variables."""
+    """Load settings from a TOML file, overridden by environment variables and Azure Key Vault.
+    
+    Priority order (highest to lowest):
+    1. Azure Key Vault secrets (if AZURE_KEYVAULT_URL is set)
+    2. Environment variables
+    3. TOML file defaults
+    """
 
     path = config_path or DEFAULT_CONFIG_PATH
     data: Dict[str, Any] = _normalize_config(_load_toml(path))
-    overrides = _env_override()
-    merged = _deep_merge(data, overrides)
+    
+    # Priority: Key Vault > Environment Variables > TOML file
+    env_overrides = _env_override()
+    keyvault_overrides = load_secrets_from_keyvault()
+    
+    # Merge: TOML -> Env -> Key Vault (Key Vault has highest priority)
+    merged = _deep_merge(data, env_overrides)
+    merged = _deep_merge(merged, keyvault_overrides)
     
     # Ensure fields with defaults are present if their parent section exists
     # This is needed because Pydantic defaults only work when field is completely absent,

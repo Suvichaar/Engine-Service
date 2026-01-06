@@ -1,47 +1,71 @@
-# PowerShell script for ACR deployment (Windows)
+# Azure Container Registry Deployment Script (PowerShell)
+# This script builds and pushes the Docker image to ACR
 
 param(
-    [string]$ResourceGroup = "newslab-rg",
-    [string]$AcrName = "newslabacr",
-    [string]$EnvName = "newslab-env"
+    [string]$ImageTag = "latest"
 )
 
-Write-Host "🚀 Starting ACR Deployment..." -ForegroundColor Green
-Write-Host "Resource Group: $ResourceGroup"
-Write-Host "ACR Name: $AcrName"
-Write-Host "Environment: $EnvName"
+# Configuration - UPDATE THESE VALUES
+$ACR_NAME = "your-acr-name"  # Replace with your ACR name (e.g., "myregistry")
+$IMAGE_NAME = "newsengine-backend"
+$RESOURCE_GROUP = "your-resource-group"  # Replace with your resource group name
+
+Write-Host "🚀 Starting deployment to Azure Container Registry..." -ForegroundColor Blue
 Write-Host ""
 
-# Check if ACR exists
+# Check if Azure CLI is installed
 try {
-    az acr show --name $AcrName --resource-group $ResourceGroup | Out-Null
+    $null = Get-Command az -ErrorAction Stop
 } catch {
-    Write-Host "❌ ACR not found. Please create it first:" -ForegroundColor Red
-    Write-Host "   az acr create --resource-group $ResourceGroup --name $AcrName --sku Basic" -ForegroundColor Yellow
+    Write-Host "❌ Azure CLI not found. Please install it first." -ForegroundColor Yellow
+    Write-Host "Visit: https://docs.microsoft.com/en-us/cli/azure/install-azure-cli"
     exit 1
 }
 
+# Check if Docker is installed
+try {
+    $null = Get-Command docker -ErrorAction Stop
+} catch {
+    Write-Host "❌ Docker not found. Please install it first." -ForegroundColor Yellow
+    exit 1
+}
+
+# Login to Azure (if not already logged in)
+Write-Host "🔐 Checking Azure login status..." -ForegroundColor Blue
+try {
+    $null = az account show 2>$null
+} catch {
+    Write-Host "⚠️  Not logged in to Azure. Logging in..." -ForegroundColor Yellow
+    az login
+}
+
 # Login to ACR
-Write-Host "📦 Logging in to ACR..." -ForegroundColor Cyan
-az acr login --name $AcrName
+Write-Host "🔐 Logging in to Azure Container Registry: $ACR_NAME..." -ForegroundColor Blue
+az acr login --name $ACR_NAME
 
-# Build and push backend
-Write-Host "🔨 Building backend image..." -ForegroundColor Cyan
-docker build -t "${AcrName}.azurecr.io/newslab-backend:latest" .
-
-Write-Host "📤 Pushing backend image..." -ForegroundColor Cyan
-docker push "${AcrName}.azurecr.io/newslab-backend:latest"
-
-# Build and push frontend
-Write-Host "🔨 Building frontend image..." -ForegroundColor Cyan
-docker build -f Dockerfile.streamlit -t "${AcrName}.azurecr.io/newslab-frontend:latest" .
-
-Write-Host "📤 Pushing frontend image..." -ForegroundColor Cyan
-docker push "${AcrName}.azurecr.io/newslab-frontend:latest"
-
-Write-Host "✅ Images pushed successfully!" -ForegroundColor Green
+# Build Docker image
 Write-Host ""
-Write-Host "Next steps:" -ForegroundColor Yellow
-Write-Host "1. Deploy backend: See ACR_DEPLOYMENT_GUIDE.md Step 5"
-Write-Host "2. Deploy frontend: See ACR_DEPLOYMENT_GUIDE.md Step 6"
+Write-Host "🏗️  Building Docker image: ${IMAGE_NAME}:${ImageTag}..." -ForegroundColor Blue
+docker build -t "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${ImageTag}" .
 
+# Push image to ACR
+Write-Host ""
+Write-Host "📤 Pushing image to ACR..." -ForegroundColor Blue
+docker push "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${ImageTag}"
+
+Write-Host ""
+Write-Host "✅ Deployment successful!" -ForegroundColor Green
+Write-Host ""
+Write-Host "📍 Image location: ${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${ImageTag}" -ForegroundColor Green
+Write-Host ""
+Write-Host "📝 Next steps:" -ForegroundColor Blue
+Write-Host "1. Update your Azure Container App to use this image"
+Write-Host "2. Set environment variable: AZURE_KEYVAULT_URL=https://your-keyvault.vault.azure.net/"
+Write-Host "3. Enable Managed Identity on your Container App"
+Write-Host "4. Grant Key Vault access to the Container App's Managed Identity"
+Write-Host ""
+Write-Host "To deploy to Azure Container Apps, run:" -ForegroundColor Blue
+Write-Host "az containerapp update \"
+Write-Host "  --name your-app-name \"
+Write-Host "  --resource-group $RESOURCE_GROUP \"
+Write-Host "  --image ${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${ImageTag}"
