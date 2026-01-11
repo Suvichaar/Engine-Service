@@ -17,10 +17,8 @@ boto3
 # Configuration
 tomli; python_version < "3.11"  # TOML parser for Python < 3.11
 
-# URL content extraction
-newspaper3k
+# URL content extraction (using Serper API - no external dependencies needed)
 pillow
-textblob
 
 # Streamlit and frontend dependencies
 streamlit
