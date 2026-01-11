@@ -774,9 +774,10 @@ class StoryOrchestrator:
     
     def _transliterate_to_english(self, text: str) -> Optional[str]:
         """
-        Transliterate ANY non-English language text to English using Azure OpenAI.
+        Translate ANY non-English language text to English using Azure OpenAI.
         Supports Hindi, Marathi, Tamil, Telugu, Bengali, Gujarati, Kannada, Punjabi, Urdu, Odia, Malayalam, and other languages.
-        Returns None if transliteration fails - never raises exceptions.
+        Returns proper English translation (not transliteration) for URL slug generation.
+        Returns None if translation fails - never raises exceptions.
         This is non-blocking and will not break story creation if it fails.
         """
         logger = logging.getLogger(__name__)
@@ -794,10 +795,10 @@ class StoryOrchestrator:
             # Limit text length for API call (reduced from 300 to 200 for faster calls)
             text_snippet = text[:200] if len(text) > 200 else text
             
-            # Updated prompt to handle ALL languages, not just Hindi/Marathi
-            prompt = f"""Convert this text to English transliteration (Roman script).
+            # Updated prompt to handle ALL languages - proper translation, not transliteration
+            prompt = f"""Translate this text to English. Translate the meaning to proper English words, not just convert to Roman script.
 The text may be in Hindi, Marathi, Tamil, Telugu, Bengali, Gujarati, Kannada, Punjabi, Urdu, Odia, Malayalam, or any other language.
-Return only the transliterated text in English (Roman script), no explanations:
+Return only the English translation (use proper English words), no explanations:
 
 {text_snippet}"""
 
@@ -809,7 +810,7 @@ Return only the transliterated text in English (Roman script), no explanations:
             }
             payload = {
                 "messages": [
-                    {"role": "system", "content": "You are a transliteration expert. Convert text from any Indian language (Hindi, Marathi, Tamil, Telugu, Bengali, Gujarati, Kannada, Punjabi, Urdu, Odia, Malayalam) or any other language to English (Roman script). Return only the transliterated text."},
+                    {"role": "system", "content": "You are a translator. Translate text from any language to proper English. Return only the translated English text, not transliteration."},
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.3,
