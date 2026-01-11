@@ -42,6 +42,10 @@ AI_IMAGE_API_KEY = "YOUR_AI_IMAGE_KEY_HERE"
 [pexels]
 PEXELS_API_KEY = "YOUR_PEXELS_KEY_HERE"
 
+# URL Content Extraction (Serper API)
+[serper]
+SERPER_API_KEY = "YOUR_SERPER_API_KEY_HERE"
+
 [image_processing]
 RESIZE_VARIANTS = "sm:300x200,md:768x432,lg:1280x720"
 

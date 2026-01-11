@@ -121,6 +121,10 @@ class ElevenLabsClient:
         return match
 
     def synthesize(self, text: str, *, language: str) -> VoiceGenerationResult:
+        logger = logging.getLogger(__name__)
+        logger.info("🎤 ElevenLabs synthesis started: text_length=%d, language=%s, voice_id=%s", 
+                    len(text), language, self._voice_id)
+        
         headers = {
             "xi-api-key": self._api_key,
             "Content-Type": "application/json",
@@ -131,17 +135,23 @@ class ElevenLabsClient:
             "voice_settings": {"stability": 0.5, "similarity_boost": 0.5},
         }
         try:
+            api_url = f"https://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}"
+            logger.info("📡 Calling ElevenLabs API: %s", api_url)
             with httpx.Client(timeout=30.0) as client:
                 response = client.post(
-                    f"https://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}",
+                    api_url,
                     headers=headers,
                     json=payload,
                 )
+                logger.info("📥 ElevenLabs response: status_code=%d, content_length=%d", 
+                           response.status_code, len(response.content) if response.content else 0)
                 response.raise_for_status()
                 audio_bytes = response.content
-        except Exception as exc:  # pragma: no cover - network fallback
-            logging.getLogger(__name__).warning("ElevenLabs synthesis failed: %s", exc)
+                logger.info("✅ ElevenLabs synthesis successful: audio_size=%d bytes", len(audio_bytes))
+        except Exception as exc:
+            logger.error("❌ ElevenLabs synthesis failed: %s", exc, exc_info=True)
             audio_bytes = f"ELEVENLABS:{language}:{text}".encode("utf-8")
+        
         return VoiceGenerationResult(
             audio_bytes=audio_bytes, format="mp3", voice_id=self._voice_id, metadata={"provider": self.name}
         )

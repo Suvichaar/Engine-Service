@@ -3,10 +3,50 @@
 from __future__ import annotations
 
 import logging
+import sys
 import os
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
+
+# ============================================
+# LOGGING CONFIGURATION - MUST BE FIRST
+# ============================================
+# Configure logging BEFORE creating FastAPI app
+# Azure Container Apps captures stdout/stderr
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+log_level = getattr(logging, LOG_LEVEL, logging.INFO)
+
+logging.basicConfig(
+    level=log_level,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler(sys.stdout),  # stdout for Azure Container Apps
+        logging.StreamHandler(sys.stderr),  # stderr as backup
+    ],
+    force=True  # Override any existing config
+)
+
+# Set specific loggers to INFO for better visibility
+logging.getLogger("app").setLevel(logging.INFO)
+logging.getLogger("app.services").setLevel(logging.INFO)
+logging.getLogger("app.services.voice_synthesis").setLevel(logging.INFO)
+logging.getLogger("app.services.orchestrator").setLevel(logging.INFO)
+logging.getLogger("app.services.image_pipeline").setLevel(logging.INFO)
+
+# Uvicorn and FastAPI logs
+logging.getLogger("uvicorn").setLevel(logging.INFO)
+logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+logging.getLogger("fastapi").setLevel(logging.INFO)
+
+# Confirm logging is configured
+logger = logging.getLogger(__name__)
+logger.info("=" * 60)
+logger.info("✅ LOGGING CONFIGURED FOR AZURE CONTAINER APPS")
+logger.info(f"Log Level: {LOG_LEVEL}")
+logger.info("Handlers: stdout, stderr")
+logger.info("=" * 60)
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
