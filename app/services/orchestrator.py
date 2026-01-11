@@ -92,9 +92,19 @@ class StoryOrchestrator:
             # This ensures News and Curious modes have isolated caches
             from app.services.url_extractor import URLContentExtractor
             from app.services.document_intelligence import DefaultDocumentIntelligencePipeline
+            from app.config import get_settings
+            import os
+            
+            # Get Serper API key from settings or environment variable
+            settings = get_settings()
+            serper_api_key = None
+            if settings.serper and settings.serper.api_key:
+                serper_api_key = settings.serper.api_key
+            elif os.getenv("SERPER_API_KEY"):
+                serper_api_key = os.getenv("SERPER_API_KEY")
             
             mode_str = payload.mode.value if hasattr(payload.mode, 'value') else str(payload.mode)
-            mode_specific_extractor = URLContentExtractor(mode=mode_str)
+            mode_specific_extractor = URLContentExtractor(mode=mode_str, api_key=serper_api_key)
             
             # Create mode-specific doc pipeline for this request
             mode_doc_pipeline = DefaultDocumentIntelligencePipeline(
@@ -392,15 +402,25 @@ class StoryOrchestrator:
         
         try:
             voice_provider = payload.voice_engine or self.default_voice_provider
-            logger.warning("Voice synthesis requested with provider=%s", voice_provider)
-            voice_assets = (
-                self.voice_service.synthesize(narrative.slide_deck, language, voice_provider)
-                if voice_provider
-                else []
-            )
-            logger.warning("Voice assets synthesized count=%d", len(voice_assets))
+            logger.info("🔊 Voice synthesis requested:")
+            logger.info("  - payload.voice_engine: %s", payload.voice_engine)
+            logger.info("  - self.default_voice_provider: %s", self.default_voice_provider)
+            logger.info("  - Final voice_provider: %s", voice_provider)
+            
+            if not voice_provider:
+                logger.error("❌ No voice provider available! voice_provider=%s, default=%s", 
+                            voice_provider, self.default_voice_provider)
+                voice_assets = []
+            else:
+                logger.info("🎤 Starting voice synthesis for %d slides...", len(narrative.slide_deck.slides))
+                voice_assets = self.voice_service.synthesize(narrative.slide_deck, language, voice_provider)
+                logger.info("✅ Voice assets synthesized: count=%d", len(voice_assets))
+                
+                # Log each voice asset
+                for idx, asset in enumerate(voice_assets):
+                    logger.info("🎵 Voice asset %d: provider=%s, url=%s", idx, asset.provider, asset.audio_url)
         except Exception as e:
-            logger.warning("Voice synthesis failed (non-critical): %s", e, exc_info=True)
+            logger.error("❌ Voice synthesis failed: %s", e, exc_info=True)
             voice_assets = []  # Continue without voice
 
         story_id = self.id_factory()
