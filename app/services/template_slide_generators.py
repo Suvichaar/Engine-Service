@@ -148,10 +148,70 @@ class CuriousTemplate2SlideGenerator:
         """
 
 
+class TestNews3SlideGenerator:
+    """Generator for test-news-3 template (breaking news style with ticker)."""
+
+    def generate_slide(
+        self,
+        paragraph: str,
+        audio_url: str,
+        background_image_url: Optional[str] = None,
+        slide_id: str = "slide",
+    ) -> str:
+        """Generate AMP slide for test-news-3 template (breaking news style)."""
+        # Default background image if none provided
+        if not background_image_url:
+            background_image_url = "https://media.suvichaar.org/upload/polaris/polarisslide.png"
+
+        # Escape HTML in paragraph
+        paragraph_escaped = paragraph.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+        return f"""
+      <amp-story-page id="{slide_id}" auto-advance-after="{slide_id}-audio">
+        <!-- BACKGROUND IMAGE -->
+        <amp-story-grid-layer template="fill" class="bg-img">
+          <amp-img
+            src="{background_image_url}"
+            width="720"
+            height="1280"
+            layout="responsive">
+          </amp-img>
+        </amp-story-grid-layer>
+        
+        <!-- BACKGROUND AUDIO -->
+        <amp-story-grid-layer template="fill">
+          <amp-video autoplay loop layout="fixed" width="1" height="1" poster="" id="{slide_id}-audio">
+            <source type="audio/mpeg" src="{audio_url}">
+          </amp-video>
+        </amp-story-grid-layer>
+
+        <!-- NEWS UI -->
+        <amp-story-grid-layer template="vertical">
+          <div class="news-layout-wrapper">
+            <div class="breaking-news-bar">
+              SUVICHAAR LIVE
+            </div>
+            <div class="content-area">
+              <div class="description">
+                {paragraph_escaped}
+              </div>
+            </div>
+            <div class="ticker-wrap">
+              <div class="ticker-move">
+                READ | SHARE | INSPIRE
+              </div>
+            </div>
+          </div>
+        </amp-story-grid-layer>
+      </amp-story-page>
+        """
+
+
 # Template Registry
 TEMPLATE_GENERATORS: dict[str, TemplateSlideGenerator] = {
     "test-news-1": TestNews1SlideGenerator(),
     "test-news-2": TestNews2SlideGenerator(),
+    "test-news-3": TestNews3SlideGenerator(),
     "curious-template-2": CuriousTemplate2SlideGenerator(),
 }
 
