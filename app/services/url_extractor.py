@@ -143,6 +143,8 @@ class URLContentExtractor:
             content_text = f"{title_lower} {text_lower[:2000]}"  # Check first 2000 chars of text
             
             # Check if content is in Hindi/Unicode (Devanagari and other Indian scripts)
+            # CRITICAL: Check BOTH title AND text for Indian scripts
+            content_to_check = f"{title} {text[:1000]}"  # Check title + first 1000 chars of text
             is_hindi_or_unicode = any(
                 '\u0900' <= char <= '\u097F' or  # Devanagari (Hindi, Marathi, etc.)
                 '\u0980' <= char <= '\u09FF' or  # Bengali
@@ -153,7 +155,7 @@ class URLContentExtractor:
                 '\u0C00' <= char <= '\u0C7F' or  # Telugu
                 '\u0C80' <= char <= '\u0CFF' or  # Kannada
                 '\u0D00' <= char <= '\u0D7F'     # Malayalam
-                for char in title
+                for char in content_to_check
             )
             
             # Check if text is actually extracted (not just placeholder)
