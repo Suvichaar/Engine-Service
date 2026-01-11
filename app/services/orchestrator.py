@@ -134,6 +134,8 @@ class StoryOrchestrator:
                 # LANGUAGE-AGNOSTIC: Check if content is in Hindi/Unicode (same logic as url_extractor.py)
                 # Get original title (not lowercased) for Unicode detection
                 original_title = first_chunk.metadata.get("title", "") if first_chunk.metadata else ""
+                original_text = first_chunk.text[:1000] if first_chunk.text else ""  # Check first 1000 chars
+                content_to_check = f"{original_title} {original_text}"  # Check BOTH title and text
                 is_hindi_or_unicode = any(
                     '\u0900' <= char <= '\u097F' or  # Devanagari (Hindi, Marathi, etc.)
                     '\u0980' <= char <= '\u09FF' or  # Bengali
@@ -144,7 +146,7 @@ class StoryOrchestrator:
                     '\u0C00' <= char <= '\u0C7F' or  # Telugu
                     '\u0C80' <= char <= '\u0CFF' or  # Kannada
                     '\u0D00' <= char <= '\u0D7F'     # Malayalam
-                    for char in original_title
+                    for char in content_to_check
                 )
                 
                 if is_hindi_or_unicode:
