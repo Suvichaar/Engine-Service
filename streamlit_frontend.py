@@ -30,9 +30,9 @@ except ImportError:
 # =========================
 # Get FastAPI URL from secrets or environment variable or use default
 try:
-    FASTAPI_BASE_URL = st.secrets.get("fastapi", {}).get("BASE_URL", "https://localhost:8000")
+    FASTAPI_BASE_URL = st.secrets.get("fastapi", {}).get("BASE_URL", "http://localhost:8001")
 except:
-    FASTAPI_BASE_URL = os.getenv("FASTAPI_BASE_URL", "https://localhost:8000")
+    FASTAPI_BASE_URL = os.getenv("FASTAPI_BASE_URL", "http://localhost:8001")
 
 # Get AWS credentials from secrets, environment, or settings.toml
 # Images go to suvichaarapp bucket, HTML goes to suvichaarstories bucket
@@ -339,14 +339,32 @@ st.markdown("Create web stories using FastAPI backend")
 with st.sidebar:
     st.header("⚙️ Configuration")
     # Initialize session state for API URL
+    # Auto-update if default URL has changed (e.g., port changed from 8000 to 8001)
+    # List of old/default URLs that should be auto-updated when default changes
+    old_default_urls = ["http://localhost:8000", "https://localhost:8000"]
+    
+    # Always sync if it's an old default (more aggressive update)
     if "api_url" not in st.session_state:
         st.session_state.api_url = FASTAPI_BASE_URL
+    elif st.session_state.api_url in old_default_urls:
+        # Force update any old default URLs to new default
+        st.session_state.api_url = FASTAPI_BASE_URL
+        st.info(f"🔄 Auto-updated API URL to default: {FASTAPI_BASE_URL}")
     
     api_url = st.text_input("FastAPI URL", value=st.session_state.api_url, key="api_url_input")
+    
+    # Update session state when user changes URL (always sync text_input with session_state)
     if api_url:
-        st.session_state.api_url = api_url
+        if api_url != st.session_state.get("api_url"):
+            st.session_state.api_url = api_url
         if api_url != FASTAPI_BASE_URL:
-            st.info(f"Using: {api_url}")
+            st.caption(f"Currently using: {api_url}")
+    
+    # Add reset button to force use default
+    if st.button("🔄 Reset to Default", help="Reset API URL to default port 8001", key="reset_api_url", use_container_width=True):
+        st.session_state.api_url = FASTAPI_BASE_URL
+        st.success(f"✅ Reset to: {FASTAPI_BASE_URL}")
+        st.rerun()
     
     # S3 Configuration Status
     st.markdown("---")
@@ -580,7 +598,7 @@ with st.form("story_form", clear_on_submit=True):
     
     # Set template options based on mode
     if mode == "news":
-        template_options = ["test-news-1", "test-news-2"]
+        template_options = ["test-news-1", "test-news-2", "test-news-3"]
         template_key = st.selectbox(
             "Template",
             options=template_options,
