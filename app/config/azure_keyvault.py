@@ -18,7 +18,7 @@ except ImportError:
 
 
 @lru_cache(maxsize=1)
-def get_keyvault_client() -> Optional[SecretClient]:
+def get_keyvault_client() -> Optional[Any]:
     """Get Azure Key Vault client using Managed Identity or DefaultAzureCredential.
     
     Returns:
@@ -106,6 +106,9 @@ def load_secrets_from_keyvault() -> Dict[str, Any]:
         
         # Pexels
         "pexels-api-key": ("pexels", "api_key"),
+        
+        # Serper
+        "serper-api-key": ("serper", "api_key"),
         
         # Azure Speech
         "azure-speech-key": ("azure_speech", "api_key"),

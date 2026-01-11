@@ -34,11 +34,17 @@ class ArticleExtractionResult:
 class URLContentExtractor:
     """Extract article content and images from URLs using Serper API."""
 
-    def __init__(self, logger: Optional[logging.Logger] = None, mode: Optional[str] = None):
+    def __init__(self, logger: Optional[logging.Logger] = None, mode: Optional[str] = None, api_key: Optional[str] = None):
         self._logger = logger or logging.getLogger(__name__)
         self._mode = mode  # "news" or "curious" for mode-specific isolation
-        # Get API key from environment variable or use default
-        self._serper_api_key = os.getenv("SERPER_API_KEY", "b0a20a6f2cf14f4b9bffae389d1b42fbfbc80f2e")
+        # Get API key from parameter, environment variable, or raise error
+        # Priority: parameter > environment variable > error
+        self._serper_api_key = api_key or os.getenv("SERPER_API_KEY")
+        if not self._serper_api_key:
+            raise ValueError(
+                "Serper API key not provided. Set SERPER_API_KEY environment variable "
+                "or pass api_key parameter to URLContentExtractor."
+            )
 
     def extract(self, url: str) -> Optional[ArticleExtractionResult]:
         """Extract article content from URL using Serper API."""

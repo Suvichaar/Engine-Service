@@ -71,6 +71,10 @@ class PexelsSettings(BaseModel):
     api_key: str
 
 
+class SerperSettings(BaseModel):
+    api_key: str = ""  # Optional - can be empty if using environment variable
+
+
 class ImageProcessingSettings(BaseModel):
     resize_variants: str = "sm:300x200,md:768x432,lg:1280x720"
 
@@ -103,6 +107,7 @@ class AppSettings(BaseModel):
     aws: AWSSettings
     ai_image: AIImageSettings | None = None
     pexels: PexelsSettings | None = None
+    serper: SerperSettings | None = None
     image_processing: ImageProcessingSettings = ImageProcessingSettings()
     elevenlabs: ElevenLabsSettings | None = None
     azure_voice: AzureVoiceSettings | None = None
@@ -255,12 +260,18 @@ SECTION_MAPPING: Dict[str, Dict[str, str]] = {
     "pexels": {
         "PEXELS_API_KEY": "api_key",
     },
+    "serper": {
+        "SERPER_API_KEY": "api_key",
+    },
     "image_processing": {
         "RESIZE_VARIANTS": "resize_variants",
     },
     "elevenlabs": {
         "ELEVENLABS_API_KEY": "api_key",
         "ELEVENLABS_VOICE_ID": "voice_id",
+    },
+    "serper": {
+        "SERPER_API_KEY": "api_key",
     },
     "azure_voice": {
         "AZURE_SPEECH_KEY": "speech_key",
@@ -354,6 +365,17 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
     
     # Note: Pexels API key should be set via environment variable
     # In Azure Container Apps, set: PEXELS_API_KEY or pexels-api-key
+    
+    # Ensure serper section exists - IMPORTANT for Serper API (URL extraction)
+    if "serper" not in merged:
+        merged["serper"] = {"api_key": ""}
+    elif isinstance(merged.get("serper"), dict):
+        serper_dict = merged["serper"]
+        if "api_key" not in serper_dict:
+            serper_dict["api_key"] = ""
+    
+    # Note: Serper API key should be set via environment variable
+    # In Azure Container Apps, set: SERPER_API_KEY or serper-api-key
     
     return AppSettings(**merged)
 
