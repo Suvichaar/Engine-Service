@@ -202,3 +202,89 @@ def test_news_mode_no_slide_texts_calls_model_router():
     _run_with_patched_deps(orchestrator, request)
 
     orchestrator.model_router.route.assert_called_once()
+
+
+def test_curious_mode_with_slide_texts_still_calls_model_router():
+    """Curious mode with slide_texts must not take the News bypass; model_router.route
+    is invoked once."""
+    from app.domain.dto import NewsNarrative, SlideBlock, SlideDeck
+
+    orchestrator = _make_orchestrator()
+
+    curious_slides = ["a", "b", "c", "d"]
+    orchestrator.user_input_service.build_payload.return_value = IntakePayload(
+        mode=Mode.CURIOUS,
+        template_key="modern",
+        slide_count=4,
+        slide_texts=curious_slides,
+    )
+
+    stub_slide_deck = SlideDeck(
+        template_key="modern",
+        language_code="en",
+        slides=[SlideBlock(placeholder_id=f"s{i}", text=f"LLM slide {i}") for i in range(4)],
+    )
+    stub_narrative = NewsNarrative(
+        mode=Mode.CURIOUS,
+        slide_deck=stub_slide_deck,
+        raw_output="llm_output",
+        headlines=["LLM slide 0"],
+        bullet_points=["LLM slide 1", "LLM slide 2", "LLM slide 3"],
+    )
+    stub_client = MagicMock()
+    stub_client.generate.return_value = stub_narrative
+    orchestrator.model_router.route.return_value = stub_client
+
+    request = StoryCreateRequest(
+        mode=Mode.CURIOUS,
+        template_key="modern",
+        slide_count=4,
+        slide_texts=curious_slides,
+    )
+
+    _run_with_patched_deps(orchestrator, request)
+
+    orchestrator.model_router.route.assert_called_once()
+
+
+def test_curious_mode_with_slide_texts_still_calls_model_router():
+    """Curious mode with slide_texts must not take the News bypass; model_router.route
+    is invoked once."""
+    from app.domain.dto import NewsNarrative, SlideBlock, SlideDeck
+
+    orchestrator = _make_orchestrator()
+
+    curious_slides = ["a", "b", "c", "d"]
+    orchestrator.user_input_service.build_payload.return_value = IntakePayload(
+        mode=Mode.CURIOUS,
+        template_key="modern",
+        slide_count=4,
+        slide_texts=curious_slides,
+    )
+
+    stub_slide_deck = SlideDeck(
+        template_key="modern",
+        language_code="en",
+        slides=[SlideBlock(placeholder_id=f"s{i}", text=f"LLM slide {i}") for i in range(4)],
+    )
+    stub_narrative = NewsNarrative(
+        mode=Mode.CURIOUS,
+        slide_deck=stub_slide_deck,
+        raw_output="llm_output",
+        headlines=["LLM slide 0"],
+        bullet_points=["LLM slide 1", "LLM slide 2", "LLM slide 3"],
+    )
+    stub_client = MagicMock()
+    stub_client.generate.return_value = stub_narrative
+    orchestrator.model_router.route.return_value = stub_client
+
+    request = StoryCreateRequest(
+        mode=Mode.CURIOUS,
+        template_key="modern",
+        slide_count=4,
+        slide_texts=curious_slides,
+    )
+
+    _run_with_patched_deps(orchestrator, request)
+
+    orchestrator.model_router.route.assert_called_once()

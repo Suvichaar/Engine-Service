@@ -20,6 +20,7 @@ from app.domain.dto import (
     IntakePayload,
     LanguageMetadata,
     Mode,
+    NewsNarrative,
     RenderedPrompt,
     SlideDeck,
     StoryRecord,
@@ -39,6 +40,7 @@ from app.domain.interfaces import (
 )
 from app.services.prompt_templates import PromptSelectionController
 from app.services.html_renderer import HTMLTemplateRenderer
+from app.services.model_clients import _build_slide_deck
 from app.api.schemas import StoryCreateRequest
 
 
@@ -252,7 +254,6 @@ class StoryOrchestrator:
 
         # Manual slide_texts bypass: skip LLM for News mode when slide_texts provided
         if payload.mode == Mode.NEWS and payload.slide_texts is not None:
-            from app.services.model_clients import _build_slide_deck, NewsNarrative
             slide_deck = _build_slide_deck(
                 payload.slide_texts,
                 payload.template_key,
@@ -261,9 +262,9 @@ class StoryOrchestrator:
             narrative = NewsNarrative(
                 mode=payload.mode,
                 slide_deck=slide_deck,
-                raw_output="manual_slide_texts",
-                headlines=[payload.slide_texts[0]] if payload.slide_texts else [],
-                bullet_points=payload.slide_texts[1:] if len(payload.slide_texts) > 1 else [],
+                raw_output="manual_slide_texts",  # sentinel: bypassed LLM generation
+                headlines=[payload.slide_texts[0]],  # slide_texts guaranteed non-None here
+                bullet_points=payload.slide_texts[1:],  # semantics unused in manual path
             )
             logger.debug("Manual slide_texts bypass: built narrative with %d slides", len(slide_deck.slides))
         else:
