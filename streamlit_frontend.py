@@ -142,6 +142,108 @@ def clear_user_session():
     if "session_created_at" in st.session_state:
         del st.session_state["session_created_at"]
 
+def _render_story_result(result: dict, api_url: str, show_doc_insights: bool = False) -> None:
+    """Display story generation result."""
+    st.success("✅ Story generated successfully!")
+
+    if show_doc_insights:
+        doc_insights = result.get("doc_insights", {})
+        if doc_insights:
+            urls = doc_insights.get("urls", [])
+            semantic_chunks = doc_insights.get("semantic_chunks", [])
+            with st.expander("🔍 Debug: Article Extraction Status", expanded=False):
+                st.write(f"**URLs processed:** {len(urls)}")
+                if urls:
+                    for url in urls:
+                        st.code(url, language=None)
+                st.write(f"**Semantic chunks extracted:** {len(semantic_chunks)}")
+                if semantic_chunks:
+                    first_chunk = semantic_chunks[0] if isinstance(semantic_chunks, list) else None
+                    if first_chunk:
+                        if isinstance(first_chunk, dict):
+                            chunk_text = first_chunk.get("text", "")
+                            chunk_title = first_chunk.get("metadata", {}).get("title", "N/A")
+                        else:
+                            chunk_text = getattr(first_chunk, "text", "")
+                            chunk_title = getattr(first_chunk, "metadata", {}).get("title", "N/A") if hasattr(first_chunk, "metadata") else "N/A"
+                        st.write(f"**Title:** {chunk_title}")
+                        st.write(f"**First chunk preview:** {chunk_text[:300]}...")
+                else:
+                    st.warning("⚠️ No semantic chunks extracted! This may cause incorrect story generation.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("🔗 URLs")
+        canurl = result.get("canurl")
+        canurl1 = result.get("canurl1")
+
+        if show_doc_insights:
+            doc_insights = result.get("doc_insights", {})
+            original_url = None
+            if doc_insights:
+                urls = doc_insights.get("urls", [])
+                if urls:
+                    original_url = urls[0] if isinstance(urls, list) else urls
+            if original_url:
+                st.markdown(f"**📰 Original Article URL:**")
+                st.code(original_url, language=None)
+                st.markdown(f"[Open Article]({original_url})")
+                st.markdown("---")
+
+        if canurl:
+            st.markdown(f"**Primary URL:**")
+            st.code(canurl, language=None)
+            st.markdown(f"[Open in Browser]({canurl})")
+        if canurl1:
+            st.markdown(f"**HTML URL:**")
+            st.code(canurl1, language=None)
+            st.markdown(f"[Open in Browser]({canurl1})")
+
+    with col2:
+        st.subheader("📈 Metadata")
+        metadata = {
+            "Story ID": result.get("id"),
+            "Mode": result.get("mode"),
+            "Category": result.get("category"),
+            "Template": result.get("template_key"),
+            "Slides": result.get("slide_count"),
+            "Language": result.get("input_language"),
+            "Created": result.get("created_at"),
+        }
+        if show_doc_insights:
+            doc_insights = result.get("doc_insights", {})
+            if doc_insights:
+                urls = doc_insights.get("urls", [])
+                if urls:
+                    metadata["Original Article URL"] = urls[0] if isinstance(urls, list) else urls
+        st.json(metadata)
+
+    st.markdown("---")
+    st.subheader("📖 Story Content Preview")
+    slide_deck = result.get("slide_deck", {})
+    slides = slide_deck.get("slides", [])
+    if slides:
+        for idx, slide in enumerate(slides, 1):
+            with st.expander(f"Slide {idx}", expanded=(idx == 1)):
+                st.markdown(f"**Text:** {slide.get('text', 'N/A')}")
+                if slide.get('image_url'):
+                    st.image(slide.get('image_url'), caption=f"Slide {idx} Image")
+
+    st.markdown("---")
+    st.subheader("💾 Download")
+    try:
+        html_content = get_story_html(result.get("id"), base_url=api_url)
+        if html_content:
+            st.download_button(
+                label="📥 Download HTML",
+                data=html_content,
+                file_name=f"story_{result.get('id')}.html",
+                mime="text/html"
+            )
+    except Exception as e:
+        st.warning(f"Could not fetch HTML: {e}")
+
+
 # Initialize user session at startup
 USER_SESSION_ID = get_user_session_id()
 
@@ -820,7 +922,7 @@ elif input_mode == "slide_by_slide":
         )
 
         # Slide count
-        wizard_slide_count = st.number_input("Slide Count", min_value=4, max_value=10, value=4, key="wizard_slide_count")
+        wizard_slide_count = st.number_input("Slide Count", min_value=4, max_value=10, value=4, key="wizard_slide_count", help="Number of slides (4–10)")
 
         # Ensure slide texts list matches the selected slide count
         if len(st.session_state.get("wizard_slide_texts", [])) != wizard_slide_count:
@@ -835,7 +937,7 @@ elif input_mode == "slide_by_slide":
             f"Content for Slide {step + 1}",
             value=st.session_state["wizard_slide_texts"][step],
             height=150,
-            key=f"wizard_text_{step}"
+            key=f"wizard_text_{wizard_slide_count}_{step}"
         )
         st.session_state["wizard_slide_texts"][step] = current_text
 
@@ -894,7 +996,6 @@ elif input_mode == "slide_by_slide":
                         current_api_url = st.session_state.get("api_url", FASTAPI_BASE_URL)
                         st.info(f"🔄 Sending request to: {current_api_url}/stories")
                         result = create_story(wizard_payload, base_url=current_api_url)
-                        st.success("✅ Story generated successfully!")
 
                         # Reset wizard state after successful generation
                         st.session_state["wizard_step"] = 0
@@ -907,57 +1008,7 @@ elif input_mode == "slide_by_slide":
                         # Display Results
                         st.markdown("---")
                         st.header("📊 Story Details")
-
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.subheader("🔗 URLs")
-                            canurl = result.get("canurl")
-                            canurl1 = result.get("canurl1")
-                            if canurl:
-                                st.markdown("**Primary URL:**")
-                                st.code(canurl, language=None)
-                                st.markdown(f"[Open in Browser]({canurl})")
-                            if canurl1:
-                                st.markdown("**HTML URL:**")
-                                st.code(canurl1, language=None)
-                                st.markdown(f"[Open in Browser]({canurl1})")
-
-                        with col2:
-                            st.subheader("📈 Metadata")
-                            wiz_metadata = {
-                                "Story ID": result.get("id"),
-                                "Mode": result.get("mode"),
-                                "Category": result.get("category"),
-                                "Template": result.get("template_key"),
-                                "Slides": result.get("slide_count"),
-                                "Created": result.get("created_at"),
-                            }
-                            st.json(wiz_metadata)
-
-                        st.markdown("---")
-                        st.subheader("📖 Story Content Preview")
-                        slide_deck = result.get("slide_deck", {})
-                        slides = slide_deck.get("slides", [])
-                        if slides:
-                            for idx, slide in enumerate(slides, 1):
-                                with st.expander(f"Slide {idx}", expanded=(idx == 1)):
-                                    st.markdown(f"**Text:** {slide.get('text', 'N/A')}")
-                                    if slide.get("image_url"):
-                                        st.image(slide.get("image_url"), caption=f"Slide {idx} Image")
-
-                        st.markdown("---")
-                        st.subheader("💾 Download")
-                        try:
-                            html_content = get_story_html(result.get("id"), base_url=current_api_url)
-                            if html_content:
-                                st.download_button(
-                                    label="📥 Download HTML",
-                                    data=html_content,
-                                    file_name=f"story_{result.get('id')}.html",
-                                    mime="text/html"
-                                )
-                        except Exception as e:
-                            st.warning(f"Could not fetch HTML: {e}")
+                        _render_story_result(result, current_api_url, show_doc_insights=False)
 
                     except Exception as e:
                         st.error(f"❌ Error: {str(e)}")
@@ -1103,14 +1154,14 @@ if submitted and input_mode == "single":
         with st.expander("📋 Request Payload", expanded=False):
             st.json(payload)
             
-            # Debug: Show specific values
-            st.write("🔍 **Debug Info:**")
-            st.write(f"- Mode: {payload.get('mode')}")
-            st.write(f"- User Input (URL/Content): {payload.get('user_input', '')[:100]}...")  # Show first 100 chars
-            st.write(f"- Image Source: {payload.get('image_source')}")
-            st.write(f"- Prompt Keywords: {payload.get('prompt_keywords', 'None')}")
-            st.write(f"- Template Key: {payload.get('template_key')}")
-            st.write(f"- Category: {payload.get('category')}")
+            if show_debug:
+                st.write("🔍 **Debug Info:**")
+                st.write(f"- Mode: {payload.get('mode')}")
+                st.write(f"- User Input (URL/Content): {payload.get('user_input', '')[:100]}...")  # Show first 100 chars
+                st.write(f"- Image Source: {payload.get('image_source')}")
+                st.write(f"- Prompt Keywords: {payload.get('prompt_keywords', 'None')}")
+                st.write(f"- Template Key: {payload.get('template_key')}")
+                st.write(f"- Category: {payload.get('category')}")
         
         # Call API (for all cases, not just curious custom images)
         with st.spinner("🔄 Generating story... This may take a few minutes."):
@@ -1119,7 +1170,6 @@ if submitted and input_mode == "single":
                 current_api_url = st.session_state.get("api_url", FASTAPI_BASE_URL)
                 st.info(f"🔄 Sending request to: {current_api_url}/stories")
                 result = create_story(payload, base_url=current_api_url)
-                st.success("✅ Story generated successfully!")
                 
                 # IMPORTANT: Clear the user_input field immediately after successful submission
                 # This prevents the same URL from appearing in the form on next render
@@ -1161,114 +1211,7 @@ if submitted and input_mode == "single":
                 # Display Results
                 st.markdown("---")
                 st.header("📊 Story Details")
-                
-                # DEBUG: Show extraction status (collapsible)
-                doc_insights = result.get("doc_insights", {})
-                if doc_insights:
-                    urls = doc_insights.get("urls", [])
-                    semantic_chunks = doc_insights.get("semantic_chunks", [])
-                    with st.expander("🔍 Debug: Article Extraction Status", expanded=False):
-                        st.write(f"**URLs processed:** {len(urls)}")
-                        if urls:
-                            for url in urls:
-                                st.code(url, language=None)
-                        st.write(f"**Semantic chunks extracted:** {len(semantic_chunks)}")
-                        if semantic_chunks:
-                            first_chunk = semantic_chunks[0] if isinstance(semantic_chunks, list) else None
-                            if first_chunk:
-                                # Handle both dict (JSON) and SemanticChunk object
-                                if isinstance(first_chunk, dict):
-                                    chunk_text = first_chunk.get("text", "")
-                                    chunk_title = first_chunk.get("metadata", {}).get("title", "N/A")
-                                else:
-                                    # Pydantic model object
-                                    chunk_text = getattr(first_chunk, "text", "")
-                                    chunk_title = getattr(first_chunk, "metadata", {}).get("title", "N/A") if hasattr(first_chunk, "metadata") else "N/A"
-                                st.write(f"**Title:** {chunk_title}")
-                                st.write(f"**First chunk preview:** {chunk_text[:300]}...")
-                        else:
-                            st.warning("⚠️ No semantic chunks extracted! This may cause incorrect story generation.")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("🔗 URLs")
-                    canurl = result.get("canurl")
-                    canurl1 = result.get("canurl1")
-                    
-                    # Display original article URL if available
-                    doc_insights = result.get("doc_insights", {})
-                    original_url = None
-                    if doc_insights:
-                        urls = doc_insights.get("urls", [])
-                        if urls:
-                            original_url = urls[0] if isinstance(urls, list) else urls
-                    
-                    if original_url:
-                        st.markdown(f"**📰 Original Article URL:**")
-                        st.code(original_url, language=None)
-                        st.markdown(f"[Open Article]({original_url})")
-                        st.markdown("---")
-                    
-                    if canurl:
-                        st.markdown(f"**Primary URL:**")
-                        st.code(canurl, language=None)
-                        st.markdown(f"[Open in Browser]({canurl})")
-                    
-                    if canurl1:
-                        st.markdown(f"**HTML URL:**")
-                        st.code(canurl1, language=None)
-                        st.markdown(f"[Open in Browser]({canurl1})")
-                
-                with col2:
-                    st.subheader("📈 Metadata")
-                    metadata = {
-                        "Story ID": result.get("id"),
-                        "Mode": result.get("mode"),
-                        "Category": result.get("category"),
-                        "Template": result.get("template_key"),
-                        "Slides": result.get("slide_count"),
-                        "Language": result.get("input_language"),
-                        "Created": result.get("created_at"),
-                    }
-                    # Add original article URL if available in doc_insights
-                    doc_insights = result.get("doc_insights", {})
-                    if doc_insights:
-                        urls = doc_insights.get("urls", [])
-                        if urls:
-                            metadata["Original Article URL"] = urls[0] if isinstance(urls, list) else urls
-                    st.json(metadata)
-                
-                # Story Content Preview
-                st.markdown("---")
-                st.subheader("📖 Story Content Preview")
-                
-                slide_deck = result.get("slide_deck", {})
-                slides = slide_deck.get("slides", [])
-                
-                if slides:
-                    for idx, slide in enumerate(slides, 1):
-                        with st.expander(f"Slide {idx}", expanded=(idx == 1)):
-                            st.markdown(f"**Text:** {slide.get('text', 'N/A')}")
-                            if slide.get('image_url'):
-                                st.image(slide.get('image_url'), caption=f"Slide {idx} Image")
-                
-                # Download HTML
-                st.markdown("---")
-                st.subheader("💾 Download")
-                
-                try:
-                    current_api_url = st.session_state.get("api_url", FASTAPI_BASE_URL)
-                    html_content = get_story_html(result.get("id"), base_url=current_api_url)
-                    if html_content:
-                        st.download_button(
-                            label="📥 Download HTML",
-                            data=html_content,
-                            file_name=f"story_{result.get('id')}.html",
-                            mime="text/html"
-                        )
-                except Exception as e:
-                    st.warning(f"Could not fetch HTML: {e}")
+                _render_story_result(result, current_api_url, show_doc_insights=True)
                 
             except Exception as e:
                 st.error(f"❌ Error: {str(e)}")
