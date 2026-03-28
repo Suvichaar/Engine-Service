@@ -86,6 +86,7 @@ class DefaultUserInputService(UserInputService):
             "category": raw_inputs.get("category"),
             "image_source": raw_inputs.get("image_source"),
             "voice_engine": raw_inputs.get("voice_engine"),
+            "slide_texts": raw_inputs.get("slide_texts"),
         }
         try:
             return IntakePayload(**candidate)

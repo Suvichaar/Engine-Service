@@ -584,6 +584,7 @@ class StoryOrchestrator:
             category=request.category,
             image_source=request.image_source,
             voice_engine=request.voice_engine,
+            slide_texts=request.slide_texts,
         )
 
     def _apply_analysis(self, doc_insights: DocInsights, analysis: AnalysisReport) -> None:

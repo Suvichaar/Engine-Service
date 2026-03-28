@@ -39,6 +39,10 @@ class IntakePayload(BaseModel):
     voice_engine: Optional[constr(pattern="^(elevenlabs_pro|azure_basic)$")] = Field(
         default=None, description="Selected text-to-speech provider."
     )
+    slide_texts: Optional[List[str]] = Field(
+        default=None,
+        description="Per-slide text overrides. When set and len == slide_count, bypasses LLM narrative generation for News mode."
+    )
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata for pipeline processing.")
 
 

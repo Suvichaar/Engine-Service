@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 from app.domain.dto import Mode, SlideCount, StoryRecord
 
@@ -29,6 +29,18 @@ class StoryCreateRequest(BaseModel):
     prompt_keywords: List[str] = Field(default_factory=list)
     image_source: Optional[str] = None
     voice_engine: Optional[str] = None
+    slide_texts: Optional[List[str]] = Field(
+        default=None,
+        description="Optional per-slide text content. When provided, must have exactly slide_count non-empty strings. Overrides LLM generation for News mode."
+    )
+
+    @model_validator(mode='after')
+    def _validate_slide_texts(self) -> StoryCreateRequest:
+        if self.slide_texts is not None:
+            if len(self.slide_texts) != self.slide_count:
+                raise ValueError("slide_texts length must equal slide_count")
+            self.slide_texts = [s.strip() for s in self.slide_texts]
+        return self
 
 
 class StoryResponse(StoryRecord):
