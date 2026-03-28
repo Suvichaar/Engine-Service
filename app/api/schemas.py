@@ -31,7 +31,7 @@ class StoryCreateRequest(BaseModel):
     voice_engine: Optional[str] = None
     slide_texts: Optional[List[str]] = Field(
         default=None,
-        description="Optional per-slide text content. When provided, must have exactly slide_count non-empty strings. Overrides LLM generation for News mode."
+        description="Optional per-slide text content. When provided, must have exactly slide_count strings (empty strings allowed). Overrides LLM generation for News mode."
     )
 
     @model_validator(mode='after')
