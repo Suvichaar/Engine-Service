@@ -457,12 +457,19 @@ def create_story(request: StoryCreateRequest, orchestrator: StoryOrchestrator = 
     logger = logging.getLogger(__name__)
     logger.warning("📥 Received story request: mode=%s image_source=%s voice_engine=%s", 
                    request.mode.value, request.image_source, request.voice_engine)
+    n_manual = len(request.slide_texts) if request.slide_texts else 0
+    logger.warning(
+        "📥 slide_texts: %s (%d items)",
+        "present" if request.slide_texts is not None else "absent",
+        n_manual,
+    )
     print(f"\n{'='*60}")
     print(f"📥 BACKEND RECEIVED REQUEST:")
     print(f"Mode: {request.mode.value}")
     print(f"Image Source: {request.image_source}")
     print(f"Voice Engine: {request.voice_engine}")
     print(f"Slide Count: {request.slide_count}")
+    print(f"slide_texts: {'present (' + str(n_manual) + ')' if request.slide_texts is not None else 'absent'}")
     print(f"{'='*60}\n")
     try:
         record = orchestrator.create_story(request)

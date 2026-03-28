@@ -20,6 +20,7 @@ from app.domain.dto import (
     IntakePayload,
     LanguageMetadata,
     Mode,
+    NewsNarrative,
     RenderedPrompt,
     SlideDeck,
     StoryRecord,
@@ -39,6 +40,7 @@ from app.domain.interfaces import (
 )
 from app.services.prompt_templates import PromptSelectionController
 from app.services.html_renderer import HTMLTemplateRenderer
+from app.services.model_clients import _build_slide_deck
 from app.api.schemas import StoryCreateRequest
 
 
@@ -250,96 +252,116 @@ class StoryOrchestrator:
             logger.error("Prompt selection/rendering failed: %s", e, exc_info=True)
             raise ValueError(f"Prompt rendering failed: {e}") from e
 
-        try:
-            model_client = self.model_router.route(payload.mode)
-            # Pass slide_count and metadata to NewsModelClient if it's NEWS mode
-            if payload.mode == Mode.NEWS and hasattr(model_client, 'generate'):
-                # For NewsModelClient, pass slide_count and category metadata
-                narrative = model_client.generate(
-                    rendered_prompt,
-                    doc_insights,
-                    slide_count=payload.slide_count,
-                    category=request.category,
-                    subcategory=None,  # Will be detected automatically
-                    emotion=None,  # Will be detected automatically
-                )
-            elif payload.mode == Mode.CURIOUS and hasattr(model_client, 'generate'):
-                # For CuriousModelClient, pass slide_count if available
-                # Note: CuriousModelClient may not support slide_count yet, but we pass it for future compatibility
-                try:
+        # Manual slide_texts bypass: skip LLM for News mode when slide_texts provided
+        if payload.mode == Mode.NEWS and payload.slide_texts is not None:
+            slide_deck = _build_slide_deck(
+                payload.slide_texts,
+                payload.template_key,
+                language.language_code,
+            )
+            narrative = NewsNarrative(
+                mode=payload.mode,
+                slide_deck=slide_deck,
+                raw_output="manual_slide_texts",  # sentinel: bypassed LLM generation
+                headlines=[payload.slide_texts[0]],  # slide_texts guaranteed non-None here
+                bullet_points=payload.slide_texts[1:],  # semantics unused in manual path
+            )
+            logger.info(
+                "Manual slide_texts bypass: built narrative with %d slides (template=%s)",
+                len(slide_deck.slides),
+                payload.template_key,
+            )
+        else:
+            try:
+                model_client = self.model_router.route(payload.mode)
+                # Pass slide_count and metadata to NewsModelClient if it's NEWS mode
+                if payload.mode == Mode.NEWS and hasattr(model_client, 'generate'):
+                    # For NewsModelClient, pass slide_count and category metadata
                     narrative = model_client.generate(
                         rendered_prompt,
                         doc_insights,
                         slide_count=payload.slide_count,
+                        category=request.category,
+                        subcategory=None,  # Will be detected automatically
+                        emotion=None,  # Will be detected automatically
                     )
-                except TypeError:
-                    # Fallback if slide_count parameter not supported yet
-                    logger.debug("CuriousModelClient doesn't support slide_count yet, using default")
-                    narrative = model_client.generate(rendered_prompt, doc_insights)
-            else:
-                narrative = model_client.generate(rendered_prompt, doc_insights)
-            logger.debug("Narrative generated, slides: %d", len(narrative.slide_deck.slides))
-        except Exception as e:
-            logger.error("Narrative generation failed: %s", e, exc_info=True)
-            raise ValueError(f"Narrative generation failed: {e}") from e
-
-        # CRITICAL LAYER 3: Post-generation validation - check if generated story matches URL
-        if job_request.url_list and len(job_request.url_list) > 0 and narrative.slide_deck.slides:
-            story_title = narrative.slide_deck.slides[0].text if narrative.slide_deck.slides else ""
-            url_str = str(job_request.url_list[0]).lower()
-            
-            # Extract URL keywords
-            from urllib.parse import urlparse
-            parsed = urlparse(url_str if url_str.startswith('http') else f'https://{url_str}')
-            url_keywords = []
-            skip_words = {'article', 'news', 'sports', 'cricket', 'football', 'cities', 
-                         'entertainment', 'technology', 'business', 'politics', 'world'}
-            
-            for part in parsed.path.split('/')[-3:]:  # Last 3 path segments
-                if not part or part == '/':
-                    continue
-                words = part.split('-')
-                for word in words:
-                    if len(word) > 3 and word.lower() not in skip_words:
-                        url_keywords.append(word.lower())
-            
-            # Check if story title matches URL keywords
-            if url_keywords and story_title:
-                title_lower = story_title.lower()
-                unique_keywords = list(dict.fromkeys(url_keywords[:5]))  # First 5 unique keywords
-                matches = sum(1 for kw in unique_keywords if kw in title_lower)
-                
-                logger.warning(f"🔍 Post-generation validation: URL keywords={unique_keywords}, Story title={story_title[:100]}, Matches={matches}")
-                
-                # If less than 2 keywords match and we have 3+ keywords, regenerate
-                if matches < 2 and len(unique_keywords) >= 3:
-                    logger.error(f"❌ Generated story doesn't match URL! Title: {story_title[:100]}, URL keywords: {unique_keywords}, Matches: {matches}")
-                    logger.error(f"❌ Regenerating with explicit URL context...")
-                    
-                    # Add URL keywords to doc_insights metadata for forced regeneration
-                    if doc_insights.metadata is None:
-                        doc_insights.metadata = {}
-                    doc_insights.metadata["force_url_topic"] = " ".join(unique_keywords)
-                    doc_insights.metadata["source_url"] = url_str
-                    
-                    # Regenerate narrative with URL context
+                elif payload.mode == Mode.CURIOUS and hasattr(model_client, 'generate'):
+                    # For CuriousModelClient, pass slide_count if available
+                    # Note: CuriousModelClient may not support slide_count yet, but we pass it for future compatibility
                     try:
-                        if payload.mode == Mode.NEWS and hasattr(model_client, 'generate'):
-                            narrative = model_client.generate(
-                                rendered_prompt,
-                                doc_insights,
-                                slide_count=payload.slide_count,
-                                category=request.category,
-                                subcategory=None,
-                                emotion=None,
-                            )
-                        else:
-                            narrative = model_client.generate(rendered_prompt, doc_insights)
-                        logger.warning(f"✅ Regenerated story with URL context: {narrative.slide_deck.slides[0].text[:100] if narrative.slide_deck.slides else 'None'}")
-                    except Exception as regen_error:
-                        logger.error(f"❌ Regeneration failed: {regen_error}, continuing with original narrative")
+                        narrative = model_client.generate(
+                            rendered_prompt,
+                            doc_insights,
+                            slide_count=payload.slide_count,
+                        )
+                    except TypeError:
+                        # Fallback if slide_count parameter not supported yet
+                        logger.debug("CuriousModelClient doesn't support slide_count yet, using default")
+                        narrative = model_client.generate(rendered_prompt, doc_insights)
                 else:
-                    logger.warning(f"✅ Post-generation validation passed: {matches} keywords matched")
+                    narrative = model_client.generate(rendered_prompt, doc_insights)
+                logger.debug("Narrative generated, slides: %d", len(narrative.slide_deck.slides))
+            except Exception as e:
+                logger.error("Narrative generation failed: %s", e, exc_info=True)
+                raise ValueError(f"Narrative generation failed: {e}") from e
+
+            # CRITICAL LAYER 3: Post-generation validation - check if generated story matches URL
+            if job_request.url_list and len(job_request.url_list) > 0 and narrative.slide_deck.slides:
+                story_title = narrative.slide_deck.slides[0].text if narrative.slide_deck.slides else ""
+                url_str = str(job_request.url_list[0]).lower()
+                
+                # Extract URL keywords
+                from urllib.parse import urlparse
+                parsed = urlparse(url_str if url_str.startswith('http') else f'https://{url_str}')
+                url_keywords = []
+                skip_words = {'article', 'news', 'sports', 'cricket', 'football', 'cities', 
+                             'entertainment', 'technology', 'business', 'politics', 'world'}
+                
+                for part in parsed.path.split('/')[-3:]:  # Last 3 path segments
+                    if not part or part == '/':
+                        continue
+                    words = part.split('-')
+                    for word in words:
+                        if len(word) > 3 and word.lower() not in skip_words:
+                            url_keywords.append(word.lower())
+                
+                # Check if story title matches URL keywords
+                if url_keywords and story_title:
+                    title_lower = story_title.lower()
+                    unique_keywords = list(dict.fromkeys(url_keywords[:5]))  # First 5 unique keywords
+                    matches = sum(1 for kw in unique_keywords if kw in title_lower)
+                    
+                    logger.warning(f"🔍 Post-generation validation: URL keywords={unique_keywords}, Story title={story_title[:100]}, Matches={matches}")
+                    
+                    # If less than 2 keywords match and we have 3+ keywords, regenerate
+                    if matches < 2 and len(unique_keywords) >= 3:
+                        logger.error(f"❌ Generated story doesn't match URL! Title: {story_title[:100]}, URL keywords: {unique_keywords}, Matches: {matches}")
+                        logger.error(f"❌ Regenerating with explicit URL context...")
+                        
+                        # Add URL keywords to doc_insights metadata for forced regeneration
+                        if doc_insights.metadata is None:
+                            doc_insights.metadata = {}
+                        doc_insights.metadata["force_url_topic"] = " ".join(unique_keywords)
+                        doc_insights.metadata["source_url"] = url_str
+                        
+                        # Regenerate narrative with URL context
+                        try:
+                            if payload.mode == Mode.NEWS and hasattr(model_client, 'generate'):
+                                narrative = model_client.generate(
+                                    rendered_prompt,
+                                    doc_insights,
+                                    slide_count=payload.slide_count,
+                                    category=request.category,
+                                    subcategory=None,
+                                    emotion=None,
+                                )
+                            else:
+                                narrative = model_client.generate(rendered_prompt, doc_insights)
+                            logger.warning(f"✅ Regenerated story with URL context: {narrative.slide_deck.slides[0].text[:100] if narrative.slide_deck.slides else 'None'}")
+                        except Exception as regen_error:
+                            logger.error(f"❌ Regeneration failed: {regen_error}, continuing with original narrative")
+                    else:
+                        logger.warning(f"✅ Post-generation validation passed: {matches} keywords matched")
 
         # Extract article images from doc_insights metadata
         article_images = None
@@ -584,6 +606,7 @@ class StoryOrchestrator:
             category=request.category,
             image_source=request.image_source,
             voice_engine=request.voice_engine,
+            slide_texts=request.slide_texts,
         )
 
     def _apply_analysis(self, doc_insights: DocInsights, analysis: AnalysisReport) -> None:

@@ -45,6 +45,9 @@ class DefaultIngestionAggregator(IngestionAggregator):
                 segments.append(payload.text_prompt.strip())
             if payload.notes:
                 segments.append(payload.notes.strip())
+            # Manual slide_texts-only requests: give pipeline text for language/metadata consistency
+            if payload.slide_texts:
+                segments.append("\n\n".join(s.strip() for s in payload.slide_texts if s is not None))
         
         # Keywords are always included (for story angle/focus)
         if payload.prompt_keywords:

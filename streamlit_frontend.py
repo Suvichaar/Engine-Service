@@ -142,6 +142,108 @@ def clear_user_session():
     if "session_created_at" in st.session_state:
         del st.session_state["session_created_at"]
 
+def _render_story_result(result: dict, api_url: str, show_doc_insights: bool = False) -> None:
+    """Display story generation result."""
+    st.success("✅ Story generated successfully!")
+
+    if show_doc_insights:
+        doc_insights = result.get("doc_insights", {})
+        if doc_insights:
+            urls = doc_insights.get("urls", [])
+            semantic_chunks = doc_insights.get("semantic_chunks", [])
+            with st.expander("🔍 Debug: Article Extraction Status", expanded=False):
+                st.write(f"**URLs processed:** {len(urls)}")
+                if urls:
+                    for url in urls:
+                        st.code(url, language=None)
+                st.write(f"**Semantic chunks extracted:** {len(semantic_chunks)}")
+                if semantic_chunks:
+                    first_chunk = semantic_chunks[0] if isinstance(semantic_chunks, list) else None
+                    if first_chunk:
+                        if isinstance(first_chunk, dict):
+                            chunk_text = first_chunk.get("text", "")
+                            chunk_title = first_chunk.get("metadata", {}).get("title", "N/A")
+                        else:
+                            chunk_text = getattr(first_chunk, "text", "")
+                            chunk_title = getattr(first_chunk, "metadata", {}).get("title", "N/A") if hasattr(first_chunk, "metadata") else "N/A"
+                        st.write(f"**Title:** {chunk_title}")
+                        st.write(f"**First chunk preview:** {chunk_text[:300]}...")
+                else:
+                    st.warning("⚠️ No semantic chunks extracted! This may cause incorrect story generation.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("🔗 URLs")
+        canurl = result.get("canurl")
+        canurl1 = result.get("canurl1")
+
+        if show_doc_insights:
+            doc_insights = result.get("doc_insights", {})
+            original_url = None
+            if doc_insights:
+                urls = doc_insights.get("urls", [])
+                if urls:
+                    original_url = urls[0] if isinstance(urls, list) else urls
+            if original_url:
+                st.markdown(f"**📰 Original Article URL:**")
+                st.code(original_url, language=None)
+                st.markdown(f"[Open Article]({original_url})")
+                st.markdown("---")
+
+        if canurl:
+            st.markdown(f"**Primary URL:**")
+            st.code(canurl, language=None)
+            st.markdown(f"[Open in Browser]({canurl})")
+        if canurl1:
+            st.markdown(f"**HTML URL:**")
+            st.code(canurl1, language=None)
+            st.markdown(f"[Open in Browser]({canurl1})")
+
+    with col2:
+        st.subheader("📈 Metadata")
+        metadata = {
+            "Story ID": result.get("id"),
+            "Mode": result.get("mode"),
+            "Category": result.get("category"),
+            "Template": result.get("template_key"),
+            "Slides": result.get("slide_count"),
+            "Language": result.get("input_language"),
+            "Created": result.get("created_at"),
+        }
+        if show_doc_insights:
+            doc_insights = result.get("doc_insights", {})
+            if doc_insights:
+                urls = doc_insights.get("urls", [])
+                if urls:
+                    metadata["Original Article URL"] = urls[0] if isinstance(urls, list) else urls
+        st.json(metadata)
+
+    st.markdown("---")
+    st.subheader("📖 Story Content Preview")
+    slide_deck = result.get("slide_deck", {})
+    slides = slide_deck.get("slides", [])
+    if slides:
+        for idx, slide in enumerate(slides, 1):
+            with st.expander(f"Slide {idx}", expanded=(idx == 1)):
+                st.markdown(f"**Text:** {slide.get('text', 'N/A')}")
+                if slide.get('image_url'):
+                    st.image(slide.get('image_url'), caption=f"Slide {idx} Image")
+
+    st.markdown("---")
+    st.subheader("💾 Download")
+    try:
+        html_content = get_story_html(result.get("id"), base_url=api_url)
+        if html_content:
+            st.download_button(
+                label="📥 Download HTML",
+                data=html_content,
+                file_name=f"story_{result.get('id')}.html",
+                mime="text/html"
+            )
+    except Exception as e:
+        st.warning(f"Could not fetch HTML: {e}")
+
+
 # Initialize user session at startup
 USER_SESSION_ID = get_user_session_id()
 
@@ -416,6 +518,21 @@ if st.session_state.last_mode != mode:
     st.session_state.last_mode = mode
     # st.rerun()  # Now safe to call outside form
 
+# Input Mode Selection
+input_mode = st.radio(
+    "Input Mode",
+    options=["single", "slide_by_slide"],
+    format_func=lambda x: {"single": "Single input (URL / text)", "slide_by_slide": "Slide-by-slide"}[x],
+    help="Single: paste URL or full text. Slide-by-slide: fill each slide individually.",
+    key="input_mode_radio"
+)
+
+# Reset wizard state when input mode changes
+if st.session_state.get("last_input_mode") != input_mode:
+    st.session_state["wizard_step"] = 0
+    st.session_state["wizard_slide_texts"] = []
+    st.session_state["last_input_mode"] = input_mode
+
 # Get slide count from session state or use default (needed for image upload widget)
 default_slide_count = 4 if mode == "news" else 4
 slide_count_for_images = st.session_state.get("slide_count", default_slide_count)
@@ -594,186 +711,313 @@ else:  # curious
         for key in keys_to_delete:
             del st.session_state[key]
 
-with st.form("story_form", clear_on_submit=True):
-    
-    # Set template options based on mode
+submitted = False
+if input_mode == "single":
+    with st.form("story_form", clear_on_submit=True):
+
+        # Set template options based on mode
+        if mode == "news":
+            template_options = ["test-news-1", "test-news-2", "test-news-3"]
+            template_key = st.selectbox(
+                "Template",
+                options=template_options,
+                help="Select template for News mode",
+                key="template_select_news"
+            )
+            default_slide_count = 4
+            slide_count_range = (4, 10)
+        else:  # curious
+            template_options = ["curious-template-1", "curious-template-2", "template-v19"]
+            template_key = st.selectbox(
+                "Template",
+                options=template_options,
+                help="Select template for Curious mode (curious-template-2 supports dynamic slide count)",
+                key="template_select_curious"
+            )
+            default_slide_count = 4
+            slide_count_range = (4, 15)
+
+        # Slide Count
+        slide_count = st.number_input(
+            "Slide Count",
+            min_value=slide_count_range[0],
+            max_value=slide_count_range[1],
+            value=default_slide_count,
+            help=f"Number of slides ({slide_count_range[0]}-{slide_count_range[1]})",
+            key="slide_count_input"
+        )
+        # Store in session state for use outside form
+        st.session_state["slide_count"] = slide_count
+
+        # Category - Dropdown for both modes
+        st.markdown("### 📂 Category")
+        if mode == "news":
+            category_options = ["News", "Technology", "Sports", "Politics", "Business", "Entertainment", "Science", "Health", "World", "Local"]
+        else:  # curious
+            category_options = ["Art", "Travel", "Entertainment", "Literature", "Books", "Sports", "History", "Culture", "Wildlife", "Spiritual", "Food", "Education"]
+
+        category = st.selectbox(
+            "Category",
+            options=category_options,
+            index=0,
+            help="Select story category"
+        )
+
+        # User Input (Unified) - Different labels for different modes
+        st.markdown("### 📄 Content Input")
+        if mode == "news":
+            # Use UUID-based key that changes on every form submission
+            # This ensures Streamlit treats it as a completely new widget each time
+            # Using session-specific keys for complete user isolation
+            new_widget_created = False
+            news_just_submitted_key = get_session_key("news_just_submitted")
+            news_user_input_key_key = get_session_key("news_user_input_key")
+
+            if news_just_submitted_key in st.session_state and st.session_state[news_just_submitted_key]:
+                # Generate completely new UUID key after submission
+                old_key = st.session_state.get(news_user_input_key_key)
+                st.session_state[news_user_input_key_key] = str(uuid.uuid4())
+                st.session_state[news_just_submitted_key] = False
+                new_widget_created = True  # Track that we just created a new widget
+                # Clear the old key's value immediately (session-specific)
+                if old_key:
+                    old_input_key = get_session_key(f"news_user_input_{old_key}")
+                    if old_input_key in st.session_state:
+                        del st.session_state[old_input_key]
+            elif news_user_input_key_key not in st.session_state:
+                # Initialize with UUID on first render
+                st.session_state[news_user_input_key_key] = str(uuid.uuid4())
+                new_widget_created = True  # First render - new widget
+
+            current_uuid = st.session_state.get(news_user_input_key_key, str(uuid.uuid4()))
+            input_key = get_session_key(f"news_user_input_{current_uuid}")
+
+            # Only clear the value if we just created a new widget in this render
+            # Don't clear on every render - that would delete user input while typing!
+            if new_widget_created and input_key in st.session_state:
+                del st.session_state[input_key]
+
+            user_input = st.text_area(
+                "Article URL or Content",
+                height=150,
+                placeholder="Enter article URL (e.g., https://example.com/article) OR paste article content here...",
+                help="Enter article URL to extract content, or paste article text directly",
+                key=input_key
+            )
+        else:  # curious
+            # Use UUID-based key that changes on every form submission
+            # This ensures Streamlit treats it as a completely new widget each time
+            # Using session-specific keys for complete user isolation
+            new_widget_created = False
+            curious_just_submitted_key = get_session_key("curious_just_submitted")
+            curious_user_input_key_key = get_session_key("curious_user_input_key")
+
+            if curious_just_submitted_key in st.session_state and st.session_state[curious_just_submitted_key]:
+                # Generate completely new UUID key after submission
+                old_key = st.session_state.get(curious_user_input_key_key)
+                st.session_state[curious_user_input_key_key] = str(uuid.uuid4())
+                st.session_state[curious_just_submitted_key] = False
+                new_widget_created = True  # Track that we just created a new widget
+                # Clear the old key's value immediately (session-specific)
+                if old_key:
+                    old_input_key = get_session_key(f"curious_user_input_{old_key}")
+                    if old_input_key in st.session_state:
+                        del st.session_state[old_input_key]
+            elif curious_user_input_key_key not in st.session_state:
+                # Initialize with UUID on first render
+                st.session_state[curious_user_input_key_key] = str(uuid.uuid4())
+                new_widget_created = True  # First render - new widget
+
+            current_uuid = st.session_state.get(curious_user_input_key_key, str(uuid.uuid4()))
+            input_key = get_session_key(f"curious_user_input_{current_uuid}")
+
+            # Only clear the value if we just created a new widget in this render
+            # Don't clear on every render - that would delete user input while typing!
+            if new_widget_created and input_key in st.session_state:
+                del st.session_state[input_key]
+
+            user_input = st.text_area(
+                "Topic or Keywords",
+                height=150,
+                placeholder="Enter topic, keywords, or question (e.g., 'How does quantum computing work?')",
+                help="Enter topic, keywords, or question for educational content",
+                key=input_key
+            )
+
+        # Special Notes field - ONLY for News mode (Curious mode already supports language in user_input)
+        special_notes = None
+        if mode == "news":
+            special_notes = st.text_area(
+                "Special Notes",
+                height=100,
+                placeholder="Optional: Add special instructions (e.g., 'i want in hindi', 'generate in marathi', etc.)",
+                help="Add any special instructions or language preferences. Default is English if not specified."
+            )
+
+        # Attachments Section (for both modes - for content extraction)
+        st.markdown("### 📎 Attachments (Optional - for Content Extraction)")
+        if mode == "news":
+            st.caption("📄 Upload documents (PDF, DOCX) or article photos for content extraction via OCR")
+            uploaded_attachments = st.file_uploader(
+                "Upload Documents or Images",
+                type=["pdf", "doc", "docx", "jpg", "jpeg", "png", "webp"],
+                accept_multiple_files=True,
+                help="Upload documents or images for content extraction. These will be processed via OCR to extract text content."
+            )
+        else:  # curious
+            st.caption("📄 Upload images or documents to use as content source")
+            uploaded_attachments = st.file_uploader(
+                "Upload Images or Documents",
+                type=["pdf", "doc", "docx", "jpg", "jpeg", "png", "webp"],
+                accept_multiple_files=True,
+                help="Upload images or documents for content extraction. These will be processed via OCR to extract text content."
+            )
+
+        # Image Source for both News and Curious modes is handled outside form (above)
+        # Use variables from outside form for both modes
+
+        # Voice Engine
+        st.markdown("### 🎤 Voice Settings")
+        voice_engine = st.selectbox(
+            "Use Elevenlabs",
+            options=["azure_basic", "elevenlabs_pro"],
+            format_func=lambda x: {
+                "azure_basic": "Use Azure",
+                "elevenlabs_pro": "Use Elevenlabs"
+            }[x],
+            help="Text-to-speech engine for narration"
+        )
+
+        # Submit Button
+        submitted = st.form_submit_button("🚀 Generate Story", use_container_width=True)
+
+elif input_mode == "slide_by_slide":
     if mode == "news":
-        template_options = ["test-news-1", "test-news-2", "test-news-3"]
-        template_key = st.selectbox(
+        st.markdown("### 📝 Slide-by-slide Input")
+
+        # Template, Category, Voice selectors for wizard
+        wizard_template_options = ["test-news-1", "test-news-2", "test-news-3"]
+        wizard_template_key = st.selectbox(
             "Template",
-            options=template_options,
+            options=wizard_template_options,
             help="Select template for News mode",
-            key="template_select_news"
+            key="wizard_template_key"
         )
-        default_slide_count = 4
-        slide_count_range = (4, 10)
-    else:  # curious
-        template_options = ["curious-template-1", "curious-template-2", "template-v19"]
-        template_key = st.selectbox(
-            "Template",
-            options=template_options,
-            help="Select template for Curious mode (curious-template-2 supports dynamic slide count)",
-            key="template_select_curious"
+
+        wizard_category_options = ["News", "Technology", "Sports", "Politics", "Business", "Entertainment", "Science", "Health", "World", "Local"]
+        wizard_category = st.selectbox(
+            "Category",
+            options=wizard_category_options,
+            index=0,
+            help="Select story category",
+            key="wizard_category"
         )
-        default_slide_count = 4
-        slide_count_range = (4, 15)
-    
-    # Slide Count
-    slide_count = st.number_input(
-        "Slide Count",
-        min_value=slide_count_range[0],
-        max_value=slide_count_range[1],
-        value=default_slide_count,
-        help=f"Number of slides ({slide_count_range[0]}-{slide_count_range[1]})",
-        key="slide_count_input"  # Add key to track in session state
-    )
-    # Store in session state for use outside form
-    st.session_state["slide_count"] = slide_count
-    
-    # Category - Dropdown for both modes
-    st.markdown("### 📂 Category")
-    if mode == "news":
-        category_options = ["News", "Technology", "Sports", "Politics", "Business", "Entertainment", "Science", "Health", "World", "Local"]
-    else:  # curious
-        category_options = ["Art", "Travel", "Entertainment", "Literature", "Books", "Sports", "History", "Culture", "Wildlife", "Spiritual", "Food", "Education"]
-    
-    category = st.selectbox(
-        "Category",
-        options=category_options,
-        index=0,
-        help="Select story category"
-    )
-    
-    # User Input (Unified) - Different labels for different modes
-    st.markdown("### 📄 Content Input")
-    if mode == "news":
-        # Use UUID-based key that changes on every form submission
-        # This ensures Streamlit treats it as a completely new widget each time
-        # Using session-specific keys for complete user isolation
-        new_widget_created = False
-        news_just_submitted_key = get_session_key("news_just_submitted")
-        news_user_input_key_key = get_session_key("news_user_input_key")
-        
-        if news_just_submitted_key in st.session_state and st.session_state[news_just_submitted_key]:
-            # Generate completely new UUID key after submission
-            old_key = st.session_state.get(news_user_input_key_key)
-            st.session_state[news_user_input_key_key] = str(uuid.uuid4())
-            st.session_state[news_just_submitted_key] = False
-            new_widget_created = True  # Track that we just created a new widget
-            # Clear the old key's value immediately (session-specific)
-            if old_key:
-                old_input_key = get_session_key(f"news_user_input_{old_key}")
-                if old_input_key in st.session_state:
-                    del st.session_state[old_input_key]
-        elif news_user_input_key_key not in st.session_state:
-            # Initialize with UUID on first render
-            st.session_state[news_user_input_key_key] = str(uuid.uuid4())
-            new_widget_created = True  # First render - new widget
-        
-        current_uuid = st.session_state.get(news_user_input_key_key, str(uuid.uuid4()))
-        input_key = get_session_key(f"news_user_input_{current_uuid}")
-        
-        # Only clear the value if we just created a new widget in this render
-        # Don't clear on every render - that would delete user input while typing!
-        if new_widget_created and input_key in st.session_state:
-            del st.session_state[input_key]
-        
-        user_input = st.text_area(
-            "Article URL or Content",
+
+        wizard_voice_engine = st.selectbox(
+            "Voice Engine",
+            options=["azure_basic", "elevenlabs_pro"],
+            format_func=lambda x: {"azure_basic": "Use Azure", "elevenlabs_pro": "Use Elevenlabs"}[x],
+            help="Text-to-speech engine for narration",
+            key="wizard_voice_engine"
+        )
+
+        # Slide count
+        wizard_slide_count = st.number_input("Slide Count", min_value=4, max_value=10, value=4, key="wizard_slide_count", help="Number of slides (4–10)")
+
+        # Ensure slide texts list matches the selected slide count
+        if len(st.session_state.get("wizard_slide_texts", [])) != wizard_slide_count:
+            st.session_state["wizard_slide_texts"] = [""] * wizard_slide_count
+            st.session_state["wizard_step"] = 0
+
+        step = st.session_state.get("wizard_step", 0)
+        step = min(step, wizard_slide_count - 1)
+
+        st.markdown(f"**Slide {step + 1} of {wizard_slide_count}**")
+        current_text = st.text_area(
+            f"Content for Slide {step + 1}",
+            value=st.session_state["wizard_slide_texts"][step],
             height=150,
-            placeholder="Enter article URL (e.g., https://example.com/article) OR paste article content here...",
-            help="Enter article URL to extract content, or paste article text directly",
-            key=input_key
+            key=f"wizard_text_{wizard_slide_count}_{step}"
         )
-    else:  # curious
-        # Use UUID-based key that changes on every form submission
-        # This ensures Streamlit treats it as a completely new widget each time
-        # Using session-specific keys for complete user isolation
-        new_widget_created = False
-        curious_just_submitted_key = get_session_key("curious_just_submitted")
-        curious_user_input_key_key = get_session_key("curious_user_input_key")
-        
-        if curious_just_submitted_key in st.session_state and st.session_state[curious_just_submitted_key]:
-            # Generate completely new UUID key after submission
-            old_key = st.session_state.get(curious_user_input_key_key)
-            st.session_state[curious_user_input_key_key] = str(uuid.uuid4())
-            st.session_state[curious_just_submitted_key] = False
-            new_widget_created = True  # Track that we just created a new widget
-            # Clear the old key's value immediately (session-specific)
-            if old_key:
-                old_input_key = get_session_key(f"curious_user_input_{old_key}")
-                if old_input_key in st.session_state:
-                    del st.session_state[old_input_key]
-        elif curious_user_input_key_key not in st.session_state:
-            # Initialize with UUID on first render
-            st.session_state[curious_user_input_key_key] = str(uuid.uuid4())
-            new_widget_created = True  # First render - new widget
-        
-        current_uuid = st.session_state.get(curious_user_input_key_key, str(uuid.uuid4()))
-        input_key = get_session_key(f"curious_user_input_{current_uuid}")
-        
-        # Only clear the value if we just created a new widget in this render
-        # Don't clear on every render - that would delete user input while typing!
-        if new_widget_created and input_key in st.session_state:
-            del st.session_state[input_key]
-        
-        user_input = st.text_area(
-            "Topic or Keywords",
-            height=150,
-            placeholder="Enter topic, keywords, or question (e.g., 'How does quantum computing work?')",
-            help="Enter topic, keywords, or question for educational content",
-            key=input_key
-        )
-    
-    # Special Notes field - ONLY for News mode (Curious mode already supports language in user_input)
-    special_notes = None
-    if mode == "news":
-        special_notes = st.text_area(
-            "Special Notes",
-            height=100,
-            placeholder="Optional: Add special instructions (e.g., 'i want in hindi', 'generate in marathi', etc.)",
-            help="Add any special instructions or language preferences. Default is English if not specified."
-        )
-    
-    # Attachments Section (for both modes - for content extraction)
-    st.markdown("### 📎 Attachments (Optional - for Content Extraction)")
-    if mode == "news":
-        st.caption("📄 Upload documents (PDF, DOCX) or article photos for content extraction via OCR")
-        uploaded_attachments = st.file_uploader(
-            "Upload Documents or Images",
-            type=["pdf", "doc", "docx", "jpg", "jpeg", "png", "webp"],
-            accept_multiple_files=True,
-            help="Upload documents or images for content extraction. These will be processed via OCR to extract text content."
-        )
-    else:  # curious
-        st.caption("📄 Upload images or documents to use as content source")
-        uploaded_attachments = st.file_uploader(
-            "Upload Images or Documents",
-            type=["pdf", "doc", "docx", "jpg", "jpeg", "png", "webp"],
-            accept_multiple_files=True,
-            help="Upload images or documents for content extraction. These will be processed via OCR to extract text content."
-        )
-    
-    # Image Source for both News and Curious modes is handled outside form (above)
-    # Use variables from outside form for both modes
-    
-    # Voice Engine
-    st.markdown("### 🎤 Voice Settings")
-    voice_engine = st.selectbox(
-        "Use Elevenlabs",
-        options=["azure_basic", "elevenlabs_pro"],
-        format_func=lambda x: {
-            "azure_basic": "Use Azure",
-            "elevenlabs_pro": "Use Elevenlabs"
-        }[x],
-        help="Text-to-speech engine for narration"
-    )
-    
-    # Submit Button
-    submitted = st.form_submit_button("🚀 Generate Story", use_container_width=True)
+        st.session_state["wizard_slide_texts"][step] = current_text
+
+        wizard_generate = False
+        col_back, col_next = st.columns(2)
+        with col_back:
+            if step > 0:
+                if st.button("← Back"):
+                    st.session_state["wizard_step"] = step - 1
+                    st.rerun()
+        with col_next:
+            if step < wizard_slide_count - 1:
+                if st.button("Next →"):
+                    st.session_state["wizard_step"] = step + 1
+                    st.rerun()
+            else:
+                wizard_generate = st.button("🚀 Generate Story", use_container_width=True)
+
+        # Process generate outside the columns block
+        if wizard_generate:
+            wizard_texts = st.session_state.get("wizard_slide_texts", [])
+            if not all(t.strip() for t in wizard_texts):
+                st.error("❌ Please fill in all slides before generating.")
+            else:
+                image_source_radio_value = st.session_state.get("news_image_source_radio", "default")
+                current_image_source = None if image_source_radio_value == "default" else image_source_radio_value
+                wizard_payload = {
+                    "mode": "news",
+                    "template_key": st.session_state.get("wizard_template_key", "test-news-1"),
+                    "slide_count": int(wizard_slide_count),
+                    "user_input": None,
+                    "slide_texts": wizard_texts,
+                    "category": st.session_state.get("wizard_category", "News"),
+                    "image_source": current_image_source,
+                    "voice_engine": st.session_state.get("wizard_voice_engine", "azure_basic"),
+                }
+
+                # Add prompt_keywords for AI/Pexels
+                if current_image_source == "ai":
+                    wiz_prompt_keywords_str = st.session_state.get("news_prompt_keywords", "")
+                    wiz_prompt_keywords = [k.strip() for k in wiz_prompt_keywords_str.split(",") if k.strip()] if wiz_prompt_keywords_str else []
+                elif current_image_source == "pexels":
+                    wiz_prompt_keywords_str = st.session_state.get("news_pexels_keywords", "")
+                    wiz_prompt_keywords = [k.strip() for k in wiz_prompt_keywords_str.split(",") if k.strip()] if wiz_prompt_keywords_str else []
+                else:
+                    wiz_prompt_keywords = []
+
+                if current_image_source in ["ai", "pexels"] and wiz_prompt_keywords:
+                    wizard_payload["prompt_keywords"] = wiz_prompt_keywords
+
+                with st.expander("📋 Request Payload", expanded=False):
+                    st.json(wizard_payload)
+
+                with st.spinner("🔄 Generating story... This may take a few minutes."):
+                    try:
+                        current_api_url = st.session_state.get("api_url", FASTAPI_BASE_URL)
+                        st.info(f"🔄 Sending request to: {current_api_url}/stories")
+                        result = create_story(wizard_payload, base_url=current_api_url)
+
+                        # Reset wizard state after successful generation
+                        st.session_state["wizard_step"] = 0
+                        st.session_state["wizard_slide_texts"] = [""] * int(wizard_slide_count)
+
+                        # Store in session state
+                        st.session_state["last_story"] = result
+                        st.session_state["story_id"] = result.get("id")
+
+                        # Display Results
+                        st.markdown("---")
+                        st.header("📊 Story Details")
+                        _render_story_result(result, current_api_url, show_doc_insights=False)
+
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+                        st.exception(e)
+    else:
+        st.info("🚧 Slide-by-slide mode is coming soon for Curious mode. Please use Single input for now.")
 
 # Process Form Submission
-if submitted:
+if submitted and input_mode == "single":
     # Set flag to indicate form was submitted - this will trigger counter increment on next render
     # The counter increment happens BEFORE form renders, ensuring fresh field
     # Using session-specific keys for complete user isolation
@@ -796,7 +1040,9 @@ if submitted:
             current_image_source = st.session_state.get("curious_image_source_radio", "ai")
         
         # Debug: Print what we're getting from session state
-        st.write(f"🔍 DEBUG: mode={mode}, image_source_radio_value={image_source_radio_value if mode == 'news' else st.session_state.get('curious_image_source_radio', 'ai')}, current_image_source={current_image_source}")
+        show_debug = st.session_state.get("show_debug", False)
+        if show_debug:
+            st.write(f"🔍 DEBUG: mode={mode}, image_source_radio_value={image_source_radio_value if mode == 'news' else st.session_state.get('curious_image_source_radio', 'ai')}, current_image_source={current_image_source}")
         
         payload = {
             "mode": mode,
@@ -905,17 +1151,17 @@ if submitted:
                     st.info(f"🖼️ {len(background_attachments)} background image(s) ready")
         
         # Show payload (for debugging)
-        with st.expander("📋 Request Payload", expanded=True):  # Expand by default for debugging
+        with st.expander("📋 Request Payload", expanded=False):
             st.json(payload)
             
-            # Debug: Show specific values
-            st.write("🔍 **Debug Info:**")
-            st.write(f"- Mode: {payload.get('mode')}")
-            st.write(f"- User Input (URL/Content): {payload.get('user_input', '')[:100]}...")  # Show first 100 chars
-            st.write(f"- Image Source: {payload.get('image_source')}")
-            st.write(f"- Prompt Keywords: {payload.get('prompt_keywords', 'None')}")
-            st.write(f"- Template Key: {payload.get('template_key')}")
-            st.write(f"- Category: {payload.get('category')}")
+            if show_debug:
+                st.write("🔍 **Debug Info:**")
+                st.write(f"- Mode: {payload.get('mode')}")
+                st.write(f"- User Input (URL/Content): {payload.get('user_input', '')[:100]}...")  # Show first 100 chars
+                st.write(f"- Image Source: {payload.get('image_source')}")
+                st.write(f"- Prompt Keywords: {payload.get('prompt_keywords', 'None')}")
+                st.write(f"- Template Key: {payload.get('template_key')}")
+                st.write(f"- Category: {payload.get('category')}")
         
         # Call API (for all cases, not just curious custom images)
         with st.spinner("🔄 Generating story... This may take a few minutes."):
@@ -924,7 +1170,6 @@ if submitted:
                 current_api_url = st.session_state.get("api_url", FASTAPI_BASE_URL)
                 st.info(f"🔄 Sending request to: {current_api_url}/stories")
                 result = create_story(payload, base_url=current_api_url)
-                st.success("✅ Story generated successfully!")
                 
                 # IMPORTANT: Clear the user_input field immediately after successful submission
                 # This prevents the same URL from appearing in the form on next render
@@ -966,114 +1211,7 @@ if submitted:
                 # Display Results
                 st.markdown("---")
                 st.header("📊 Story Details")
-                
-                # DEBUG: Show extraction status (collapsible)
-                doc_insights = result.get("doc_insights", {})
-                if doc_insights:
-                    urls = doc_insights.get("urls", [])
-                    semantic_chunks = doc_insights.get("semantic_chunks", [])
-                    with st.expander("🔍 Debug: Article Extraction Status", expanded=False):
-                        st.write(f"**URLs processed:** {len(urls)}")
-                        if urls:
-                            for url in urls:
-                                st.code(url, language=None)
-                        st.write(f"**Semantic chunks extracted:** {len(semantic_chunks)}")
-                        if semantic_chunks:
-                            first_chunk = semantic_chunks[0] if isinstance(semantic_chunks, list) else None
-                            if first_chunk:
-                                # Handle both dict (JSON) and SemanticChunk object
-                                if isinstance(first_chunk, dict):
-                                    chunk_text = first_chunk.get("text", "")
-                                    chunk_title = first_chunk.get("metadata", {}).get("title", "N/A")
-                                else:
-                                    # Pydantic model object
-                                    chunk_text = getattr(first_chunk, "text", "")
-                                    chunk_title = getattr(first_chunk, "metadata", {}).get("title", "N/A") if hasattr(first_chunk, "metadata") else "N/A"
-                                st.write(f"**Title:** {chunk_title}")
-                                st.write(f"**First chunk preview:** {chunk_text[:300]}...")
-                        else:
-                            st.warning("⚠️ No semantic chunks extracted! This may cause incorrect story generation.")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("🔗 URLs")
-                    canurl = result.get("canurl")
-                    canurl1 = result.get("canurl1")
-                    
-                    # Display original article URL if available
-                    doc_insights = result.get("doc_insights", {})
-                    original_url = None
-                    if doc_insights:
-                        urls = doc_insights.get("urls", [])
-                        if urls:
-                            original_url = urls[0] if isinstance(urls, list) else urls
-                    
-                    if original_url:
-                        st.markdown(f"**📰 Original Article URL:**")
-                        st.code(original_url, language=None)
-                        st.markdown(f"[Open Article]({original_url})")
-                        st.markdown("---")
-                    
-                    if canurl:
-                        st.markdown(f"**Primary URL:**")
-                        st.code(canurl, language=None)
-                        st.markdown(f"[Open in Browser]({canurl})")
-                    
-                    if canurl1:
-                        st.markdown(f"**HTML URL:**")
-                        st.code(canurl1, language=None)
-                        st.markdown(f"[Open in Browser]({canurl1})")
-                
-                with col2:
-                    st.subheader("📈 Metadata")
-                    metadata = {
-                        "Story ID": result.get("id"),
-                        "Mode": result.get("mode"),
-                        "Category": result.get("category"),
-                        "Template": result.get("template_key"),
-                        "Slides": result.get("slide_count"),
-                        "Language": result.get("input_language"),
-                        "Created": result.get("created_at"),
-                    }
-                    # Add original article URL if available in doc_insights
-                    doc_insights = result.get("doc_insights", {})
-                    if doc_insights:
-                        urls = doc_insights.get("urls", [])
-                        if urls:
-                            metadata["Original Article URL"] = urls[0] if isinstance(urls, list) else urls
-                    st.json(metadata)
-                
-                # Story Content Preview
-                st.markdown("---")
-                st.subheader("📖 Story Content Preview")
-                
-                slide_deck = result.get("slide_deck", {})
-                slides = slide_deck.get("slides", [])
-                
-                if slides:
-                    for idx, slide in enumerate(slides, 1):
-                        with st.expander(f"Slide {idx}", expanded=(idx == 1)):
-                            st.markdown(f"**Text:** {slide.get('text', 'N/A')}")
-                            if slide.get('image_url'):
-                                st.image(slide.get('image_url'), caption=f"Slide {idx} Image")
-                
-                # Download HTML
-                st.markdown("---")
-                st.subheader("💾 Download")
-                
-                try:
-                    current_api_url = st.session_state.get("api_url", FASTAPI_BASE_URL)
-                    html_content = get_story_html(result.get("id"), base_url=current_api_url)
-                    if html_content:
-                        st.download_button(
-                            label="📥 Download HTML",
-                            data=html_content,
-                            file_name=f"story_{result.get('id')}.html",
-                            mime="text/html"
-                        )
-                except Exception as e:
-                    st.warning(f"Could not fetch HTML: {e}")
+                _render_story_result(result, current_api_url, show_doc_insights=True)
                 
             except Exception as e:
                 st.error(f"❌ Error: {str(e)}")
