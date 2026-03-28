@@ -133,6 +133,9 @@ class DefaultLanguageDetectionService(LanguageDetectionService):
             segments.append(" ".join(payload.prompt_keywords))
         if payload.urls:
             segments.append(" ".join(str(url) for url in payload.urls))
+        # Manual per-slide input: use slide text for detection when no URL/article body
+        if payload.slide_texts:
+            segments.append(" \n ".join(payload.slide_texts))
         return AggregatedText(" \n ".join(segments))
 
     def _preview(self, text: str, max_length: int = 200) -> str:

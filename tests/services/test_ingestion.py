@@ -26,7 +26,8 @@ def make_language(**overrides):
 
 
 def test_aggregator_builds_structured_request():
-    payload = make_payload()
+    # No URLs so text_prompt is included (URL branch skips primary text)
+    payload = make_payload(urls=[])
     language = make_language()
     aggregator = DefaultIngestionAggregator()
 
@@ -34,7 +35,7 @@ def test_aggregator_builds_structured_request():
 
     assert job_request.text_input and "Primary text" in job_request.text_input
     assert "Additional context" in job_request.text_input
-    assert [str(url) for url in job_request.url_list] == ["https://example.com/"]
+    assert job_request.url_list == []
     assert job_request.attachments[0].uri == "file1.pdf"
     assert job_request.attachments[0].id == "attachment-1"
     assert job_request.focus_keywords == ["analysis", "insights"]
@@ -51,4 +52,18 @@ def test_aggregator_handles_empty_values():
     assert job_request.url_list == []
     assert job_request.attachments == []
     assert job_request.focus_keywords == []
+
+
+def test_aggregator_includes_slide_texts_when_no_urls():
+    payload = make_payload(
+        text_prompt=None,
+        notes=None,
+        urls=[],
+        slide_texts=["Slide A", "Slide B", "Slide C", "Slide D"],
+    )
+    language = make_language(source_text_preview=None)
+    job_request = DefaultIngestionAggregator().aggregate(payload, language)
+    assert job_request.text_input
+    assert "Slide A" in job_request.text_input
+    assert "Slide D" in job_request.text_input
 

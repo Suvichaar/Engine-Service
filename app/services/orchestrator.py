@@ -266,7 +266,11 @@ class StoryOrchestrator:
                 headlines=[payload.slide_texts[0]],  # slide_texts guaranteed non-None here
                 bullet_points=payload.slide_texts[1:],  # semantics unused in manual path
             )
-            logger.debug("Manual slide_texts bypass: built narrative with %d slides", len(slide_deck.slides))
+            logger.info(
+                "Manual slide_texts bypass: built narrative with %d slides (template=%s)",
+                len(slide_deck.slides),
+                payload.template_key,
+            )
         else:
             try:
                 model_client = self.model_router.route(payload.mode)
