@@ -1,0 +1,29 @@
+[azure_api]
+AZURE_OPENAI_ENDPOINT = "https://example.openai.azure.com"
+AZURE_OPENAI_API_KEY = "placeholder"
+AZURE_OPENAI_DEPLOYMENT = "gpt-4o-mini"
+AZURE_OPENAI_API_VERSION = "2025-01-01-preview"
+
+[azure_speech]
+AZURE_SPEECH_KEY = "placeholder"
+AZURE_SPEECH_REGION = "eastus"
+VOICE_NAME = "hi-IN-AaravNeural"
+
+[azure_di]
+AZURE_DI_ENDPOINT = "https://example.cognitiveservices.azure.com"
+AZURE_DI_KEY = "placeholder"
+
+[aws]
+AWS_ACCESS_KEY = "placeholder"
+AWS_SECRET_KEY = "placeholder"
+AWS_REGION = "ap-south-1"
+AWS_BUCKET = "placeholder"
+S3_PREFIX = "media/"
+HTML_S3_PREFIX = ""
+CDN_PREFIX_MEDIA = "https://media.example.org/"
+CDN_HTML_BASE = "https://stories.example.org/"
+CDN_BASE = "https://cdn.example.org/"
+DEFAULT_ERROR_IMAGE = "https://media.example.org/default-error.jpg"
+
+[database]
+DATABASE_URL = "sqlite:///./stories.db"
