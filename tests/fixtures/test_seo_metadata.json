@@ -14,7 +14,7 @@
     "og_tags": "og:title, og:description, og:type=Article",
     "twitter_cards": "twitter:title, twitter:description",
     "lang_attribute": "en-US or hi-IN based on content",
-    "content_type": "News for news mode, Article for curious mode",
+    "content_type": "News",
     "timestamps": "ISO 8601 format with Z suffix"
   }
 }

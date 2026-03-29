@@ -22,11 +22,11 @@ from app.persistence.story_repository import Base, SqlAlchemyStoryRepository
 def make_story_record() -> StoryRecord:
     return StoryRecord(
         id=uuid4(),
-        mode=Mode.CURIOUS,
-        category="Art",
+        mode=Mode.NEWS,
+        category="News",
         input_language="en",
         slide_count=4,
-        template_key="modern",
+        template_key="test-news-1",
         doc_insights=DocInsights(
             semantic_chunks=[SemanticChunk(id="chunk-1", text="Sample text")],
             summaries=["Summary"],
@@ -55,7 +55,6 @@ def make_story_record() -> StoryRecord:
             )
         ],
         prompt_news="news prompt",
-        prompt_curious="curious prompt",
         canurl="https://story/primary",
         canurl1="https://story/secondary",
         created_at=datetime.utcnow(),
@@ -77,8 +76,8 @@ def test_story_repository_save_and_get():
     fetched = repo.get(str(record.id))
 
     assert fetched.id == record.id
-    assert fetched.category == "Art"
-    assert fetched.slide_deck.template_key == "modern"
+    assert fetched.category == "News"
+    assert fetched.slide_deck.template_key == "test-news-1"
     assert fetched.image_assets[0].source == "ai"
 
 
@@ -93,4 +92,3 @@ def test_story_repository_updates_existing_record():
     fetched = repo.get(str(record.id))
     assert fetched.category == "History"
     assert fetched.prompt_news == "updated news"
-

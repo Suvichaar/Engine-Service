@@ -8,19 +8,16 @@ from typing import Iterable, Protocol
 from .dto import (
     AnalysisReport,
     DocInsights,
-    EntityMap,
-    Mode,
     NarrativeResponse,
     ImageAsset,
     IntakePayload,
     LanguageMetadata,
-    SemanticChunk,
     SlideDeck,
     StoryRecord,
-    StructuredJobRequest,
-    VoiceAsset,
     PromptTemplateInfo,
     RenderedPrompt,
+    StructuredJobRequest,
+    VoiceAsset,
 )
 
 
@@ -81,17 +78,8 @@ class PromptTemplateService(Protocol):
 class ModelClient(Protocol):
     """Base interface for narrative models."""
 
-    mode: Mode
-
     def generate(self, prompt: "RenderedPrompt", insights: DocInsights) -> NarrativeResponse:
         """Produce a narrative response given a rendered prompt and document insights."""
-
-
-class ModelRouter(Protocol):
-    """Route requests to the appropriate narrative model."""
-
-    def route(self, mode: str) -> ModelClient:
-        """Return the model client for the requested mode."""
 
 
 class SlideAssemblyService(Protocol):
@@ -128,4 +116,3 @@ class StoryRepository(Protocol):
 
     def get_by_canurl(self, canurl: str) -> StoryRecord:
         """Load a story record by its canonical URL (slug)."""
-

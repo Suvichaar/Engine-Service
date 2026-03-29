@@ -7,11 +7,9 @@ __all__ = [
     "document_intelligence",
     "analysis",
     "prompt_templates",
-    "model_router",
     "model_clients",
     "image_pipeline",
     "voice_synthesis",
     "orchestrator",
     "html_renderer",
 ]
-

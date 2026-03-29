@@ -49,12 +49,12 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 def test_create_and_get_story(client: TestClient):
     payload = {
-        "mode": "curious",
-        "template_key": "modern",
+        "mode": "news",
+        "template_key": "test-news-1",
         "slide_count": 4,
-        "category": "Art",
-        "text_prompt": "Tell me about AI art.",
-        "prompt_keywords": ["AI", "art"],
+        "category": "News",
+        "text_prompt": "Summarize the latest AI infrastructure funding update.",
+        "prompt_keywords": ["AI", "funding"],
         "image_source": "ai",
     }
 
@@ -68,6 +68,5 @@ def test_create_and_get_story(client: TestClient):
     assert get_response.status_code == 200
     fetched = get_response.json()
     assert fetched["id"] == story_id
-    assert fetched["category"] == "Art"
-    assert fetched["template_key"] == "modern"
-
+    assert fetched["category"] == "News"
+    assert fetched["template_key"] == "test-news-1"

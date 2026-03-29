@@ -14,6 +14,7 @@ import httpx
 from pydantic import HttpUrl
 
 from app.domain.dto import ImageAsset, Mode, SlideBlock, SlideDeck, StoryRecord, VoiceAsset
+from app.services.template_registry import get_template_definition
 from app.services.template_slide_generators import get_slide_generator
 from app.services.model_clients import LanguageModel
 
@@ -46,35 +47,11 @@ class TemplateLoader:
 
     def _load_from_file(self, template_key: str, mode: Mode) -> str:
         """Load template from file system."""
-        # If template_key is a URL, extract template name
-        original_key = template_key
-        if template_key.startswith(("http://", "https://")):
-            # Extract filename from URL: "https://example.com/test-news-1.html" → "test-news-1"
-            template_key = template_key.split("/")[-1].replace(".html", "")
-            self._logger.info("Extracted template name '%s' from URL: %s", template_key, original_key)
-        
-        base_dir = self._template_base_path
-
-        # Try mode-specific template directory first
-        mode_dir = base_dir / mode.value
-        if not mode_dir.exists():
-            # Fallback: try news if mode-specific dir doesn't exist
-            fallback_dir = base_dir / "news"
-            if fallback_dir.exists():
-                mode_dir = fallback_dir
-                self._logger.warning("Mode-specific template dir not found, using fallback: %s", mode_dir)
-            else:
-                mode_dir = self._template_base_path
-                self._logger.warning("Using template_base_path as last resort: %s", mode_dir)
-
-        template_path = mode_dir / f"{template_key}.html"
-        if not template_path.exists():
-            # Try without extension
-            template_path = mode_dir / template_key
-            if not template_path.exists():
-                raise FileNotFoundError(f"Template not found: {template_path} (mode: {mode.value}, base_dir: {base_dir}, mode_dir: {mode_dir})")
-
-        self._logger.info("Loading template from file: %s (mode: %s, base_dir: %s)", template_path, mode.value, base_dir)
+        definition = get_template_definition(template_key)
+        if definition.mode != mode:
+            raise FileNotFoundError(f"Template '{definition.key}' is not registered for mode '{mode.value}'.")
+        template_path = definition.file_path
+        self._logger.info("Loading template from registry: %s (mode: %s)", template_path, mode.value)
         return template_path.read_text(encoding="utf-8")
 
     def _load_from_url(self, url: str) -> str:
@@ -299,18 +276,16 @@ class PlaceholderMapper:
                 else:
                     placeholders[f"s{idx}image1"] = self._default_bg_image
         else:
-            # Normal flow - use image_assets or default (for both News AI and Curious)
+            # Normal flow for generated images: use stored image assets when available.
             self._logger.info("Setting slide image placeholders for AI images - have %d image_assets, %d slides", 
                             len(record.image_assets) if record.image_assets else 0, len(record.slide_deck.slides))
             for idx in range(1, len(record.slide_deck.slides) + 1):
-                # For both modes, image_assets[0] is cover, image_assets[1] is slide 2, etc.
-                # So s1image1 = image_assets[0], s2image1 = image_assets[1], etc.
+                # image_assets[0] is the cover, image_assets[1] is slide 2, and so on.
                 asset_idx = idx - 1  # Convert slide number to asset index
                 if asset_idx < len(record.image_assets):
                     asset = record.image_assets[asset_idx]
-                    # For both News (AI) and Curious mode, generate portrait resolution (720x1280) from S3 key
+                    # Generate portrait resolution (720x1280) from the stored S3 key when possible.
                     if hasattr(asset, "original_object_key") and asset.original_object_key:
-                        # Generate portrait resolution URL (720x1280) from S3 key for both News (AI) and Curious mode
                         placeholder_url = self._generate_resized_url_from_s3_key(
                             asset.original_object_key, 720, 1280
                         )
@@ -351,8 +326,7 @@ class PlaceholderMapper:
         else:
             # If already in correct format (en-US, hi-IN) or other format, use as-is
             placeholders["lang"] = lang if "-" in lang else f"{lang}-US"
-        # Content type: News for News mode, Article for Curious mode
-        placeholders["contenttype"] = "News" if record.mode == Mode.NEWS else "Article"
+        placeholders["contenttype"] = "News"
         # URLs
         placeholders["canurl"] = str(record.canurl) if record.canurl else ""
         placeholders["canurl1"] = str(record.canurl1) if record.canurl1 else ""
@@ -573,11 +547,7 @@ Keywords:"""
         if record.input_language:
             keywords.append(record.input_language)
         keywords.append("web story")
-        if record.mode == Mode.NEWS:
-            keywords.append("news")
-        elif record.mode == Mode.CURIOUS:
-            keywords.append("education")
-            keywords.append("curious")
+        keywords.append("news")
         return ", ".join(keywords)
 
 
@@ -622,50 +592,15 @@ class HTMLTemplateRenderer:
 
         # 2.5. Fix CTA slide placeholder for AI/Pexels/Custom images BEFORE replacement
         # CTA slide uses {{potraitcoverurl}} or {{cta_image_url}} which should be CTA image
-        # For News mode: use last slide's image
-        # For Curious mode: use CTA-specific image (placeholder_id="cta-slide")
-        # This applies to all image sources: ai, pexels, custom
+        # For News mode, CTA uses the last slide image.
         if image_source in ["ai", "pexels", "custom"] and record.image_assets and len(record.image_assets) > 0:
             cta_image_url = None
             
-            if record.mode == Mode.NEWS:
-                # News mode: use last slide's image
-                last_slide_num = len(record.slide_deck.slides)
-                cta_placeholder_key = f"s{last_slide_num}image1"
-                if cta_placeholder_key in placeholders:
-                    cta_image_url = placeholders[cta_placeholder_key]
-                    self._logger.info("Set CTA slide to use last slide's AI image: %s", cta_image_url[:80])
-            elif record.mode == Mode.CURIOUS:
-                # Curious mode: CTA image is generated last, so it's the last image_asset
-                # Total slides = deck.slides (cover + middle) + 1 CTA
-                # So image_assets should have: cover (0) + middle slides (1..n) + CTA (last)
-                if record.image_assets and len(record.image_assets) > len(record.slide_deck.slides):
-                    # CTA image is the last one (after all deck slides)
-                    cta_asset = record.image_assets[-1]
-                    if hasattr(cta_asset, "original_object_key") and cta_asset.original_object_key:
-                        # Check if it's the CTA image by checking the S3 key (should contain "cta-slide")
-                        if "cta-slide" in cta_asset.original_object_key:
-                            cta_image_url = self._mapper._generate_resized_url_from_s3_key(
-                                cta_asset.original_object_key, 720, 1280
-                            )
-                            self._logger.info("Set CTA slide to use CTA-specific AI image: %s", cta_image_url[:80])
-                        else:
-                            # Still use it as CTA (it's the last image)
-                            cta_image_url = self._mapper._generate_resized_url_from_s3_key(
-                                cta_asset.original_object_key, 720, 1280
-                            )
-                            self._logger.info("Set CTA slide to use last AI image (likely CTA): %s", cta_image_url[:80])
-                    elif cta_asset.resized_variants and len(cta_asset.resized_variants) > 0:
-                        cta_image_url = str(cta_asset.resized_variants[0])
-                        self._logger.info("Set CTA slide to use last AI image variant (likely CTA): %s", cta_image_url[:80])
-                
-                # Fallback: use last slide's image if CTA-specific image not found
-                if not cta_image_url:
-                    last_slide_num = len(record.slide_deck.slides)
-                    cta_placeholder_key = f"s{last_slide_num}image1"
-                    if cta_placeholder_key in placeholders:
-                        cta_image_url = placeholders[cta_placeholder_key]
-                        self._logger.warning("CTA-specific image not found, using last slide's image: %s", cta_image_url[:80])
+            last_slide_num = len(record.slide_deck.slides)
+            cta_placeholder_key = f"s{last_slide_num}image1"
+            if cta_placeholder_key in placeholders:
+                cta_image_url = placeholders[cta_placeholder_key]
+                self._logger.info("Set CTA slide to use last slide image: %s", cta_image_url[:80])
             
             if cta_image_url:
                 # Replace {{potraitcoverurl}} or {{cta_image_url}} in CTA slide section

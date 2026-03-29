@@ -1,6 +1,6 @@
 # Engine Service Backend
 
-This repository is now organized as a backend-first service. The old Streamlit frontend has been removed. The immediate focus is preparing the news backend cleanly so curious can be split by the other team without sharing a mixed service surface.
+This repository is organized as a backend-first news service. The old Streamlit frontend has been removed, and this backend now targets the news workflow only.
 
 ## Structure
 
@@ -14,7 +14,7 @@ backend/
     prompts/
     services/
     templates/
-      curious/
+      templates.yml
       news/
     utils/
     main.py
@@ -57,4 +57,5 @@ Use the example file as the source of truth for non-secret structure. Replace lo
 - Root-level ad hoc tests, debug payloads, and stray local validation scripts were removed.
 - JSON scenario payloads were preserved under `tests/fixtures/`.
 - Legacy ecommerce artifacts were moved to `_archive/`.
-- The current backend still contains both news and curious code paths internally, but the filesystem layout is now clean enough to continue the service split safely.
+- The backend contract is being tightened around news-only behavior.
+- Template metadata is centrally managed in `backend/app/templates/templates.yml` so future template add-ons stay configuration-driven.

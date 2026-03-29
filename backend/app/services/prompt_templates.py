@@ -7,21 +7,20 @@ from typing import Iterable, Sequence
 from app.domain.dto import AnalysisReport, PromptTemplateInfo, RenderedPrompt
 from app.domain.interfaces import PromptTemplateService
 from app.prompts import get_prompt_config
-from app.prompts.registry import InvalidCategoryError, PromptNotFoundError, available_modes, render_prompt
+from app.prompts.registry import InvalidCategoryError, PromptNotFoundError, render_prompt
 
 
 class DefaultPromptTemplateService(PromptTemplateService):
     """Serve prompt templates from the prompts registry."""
 
     def list_templates(self) -> Iterable[PromptTemplateInfo]:
-        for mode in available_modes():
-            config = get_prompt_config(mode)
-            yield PromptTemplateInfo(
-                mode=mode,
-                description=getattr(config, "description", None),
-                allowed_categories=list(config.allowed_categories),
-                user_template=config.user_template,
-            )
+        config = get_prompt_config("news")
+        yield PromptTemplateInfo(
+            mode="news",
+            description=getattr(config, "description", None),
+            allowed_categories=list(config.allowed_categories),
+            user_template=config.user_template,
+        )
 
     def get_prompt(
         self,
@@ -95,4 +94,3 @@ class PromptSelectionController:
 
 
 __all__ = ["DefaultPromptTemplateService", "PromptSelectionController", "PromptSelectionError"]
-

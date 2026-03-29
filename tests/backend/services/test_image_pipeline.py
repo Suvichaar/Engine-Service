@@ -52,10 +52,10 @@ def make_payload(image_source: str, attachments: list[str] | None = None) -> Int
         urls=[],
         attachments=attachments or [],
         prompt_keywords=["innovation"],
-        mode=Mode.CURIOUS,
-        template_key="modern",
+        mode=Mode.NEWS,
+        template_key="test-news-1",
         slide_count=4,
-        category="Art",
+        category="News",
         image_source=image_source,
         voice_engine=None,
     )
@@ -63,7 +63,7 @@ def make_payload(image_source: str, attachments: list[str] | None = None) -> Int
 
 def make_deck() -> SlideDeck:
     return SlideDeck(
-        template_key="modern",
+        template_key="test-news-1",
         language_code="en",
         slides=[
             SlideBlock(placeholder_id="title", text="AI Revolution"),
@@ -125,4 +125,3 @@ def test_s3_storage_service_generates_cloudfront_urls():
     assert asset.original_object_key.startswith("media/")
     assert len(asset.resized_variants) == 2
     assert all(str(url).startswith("https://cdn.example.com") for url in asset.resized_variants)
-

@@ -19,5 +19,6 @@ newspaper3k
 PyPDF2
 python-docx
 azure-cognitiveservices-speech
+PyYAML
 pytest
 pytest-asyncio

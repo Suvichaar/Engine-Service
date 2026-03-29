@@ -40,8 +40,8 @@ def test_build_payload_filters_invalid_urls():
 
     payload = service.build_payload(
         urls=["https://valid.com", "not-a-url"],
-        mode="curious",
-        template_key="classic",
+        mode="news",
+        template_key="test-news-1",
         slide_count=4,
     )
 
@@ -57,4 +57,3 @@ def test_build_payload_invalid_mode_raises_value_error():
             template_key="classic",
             slide_count=4,
         )
-

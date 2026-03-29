@@ -293,37 +293,6 @@ def generate_news_slide_prompt(
         return f"{safe_text}, professional news illustration for slide {slide_index + 1}, {variation}, positive, informative, clean, modern, unique design"
 
 
-def generate_curious_slide_prompt(slide_text: str, is_cover: bool = False) -> str:
-    """Generate prompt for a curious mode slide.
-    
-    Args:
-        slide_text: Text content of the slide
-        is_cover: Whether this is the cover slide
-        
-    Returns:
-        Formatted prompt string
-    """
-    if is_cover:
-        return f"Cover for educational story: {slide_text or 'Learning'} — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette; inclusive, family-friendly; no text/logos/watermarks; no real-person likeness."
-    else:
-        return f"{slide_text or 'Visual concept'} — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette; inclusive, family-friendly; no text/logos/watermarks; no real-person likeness."
-
-
-def generate_cta_prompt(mode: str = "curious") -> str:
-    """Generate prompt for CTA slide.
-    
-    Args:
-        mode: Story mode (curious or news)
-        
-    Returns:
-        CTA prompt string
-    """
-    if mode == "curious":
-        return "Educational story call-to-action slide — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette, positive learning theme, inclusive, family-friendly; no text/logos/watermarks; no real-person likeness"
-    else:
-        return "Professional news call-to-action illustration, clean, modern, positive, informative, engaging"
-
-
 def sanitize_revised_prompt(revised_prompt: str, max_length: int = 200) -> str:
     """Sanitize and shorten Azure's revised_prompt for retry.
     
@@ -620,4 +589,3 @@ def generate_sequential_topics_prompt(
         topic_title=topic_title,
         content_type=content_type
     )
-

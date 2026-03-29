@@ -11,9 +11,8 @@ def test_list_templates_returns_modes():
 
     templates = {info.mode: info for info in service.list_templates()}
 
-    assert "curious" in templates
     assert "news" in templates
-    assert "{analysis}" in templates["curious"].user_template
+    assert "{analysis}" in templates["news"].user_template
 
 
 def test_get_prompt_renders_user_content():
@@ -44,8 +43,8 @@ def test_prompt_selection_controller_composes_analysis_text():
     )
 
     prompt = controller.select_prompt(
-        mode="curious",
-        category="Art",
+        mode="news",
+        category="News",
         language="en-IN",
         analysis=analysis,
         keywords=["innovation"],
@@ -53,7 +52,7 @@ def test_prompt_selection_controller_composes_analysis_text():
 
     assert "AI adoption increases." in prompt.user
     assert "automation" in prompt.user
-    assert prompt.metadata["mode"] == "curious"
+    assert prompt.metadata["mode"] == "news"
 
 
 def test_prompt_selection_invalid_category_raises():
@@ -70,4 +69,3 @@ def test_prompt_selection_invalid_category_raises():
             analysis=analysis,
             keywords=[],
         )
-

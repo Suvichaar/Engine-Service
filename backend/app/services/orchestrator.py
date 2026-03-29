@@ -31,7 +31,7 @@ from app.domain.interfaces import (
     ImageAssetPipeline,
     IngestionAggregator,
     LanguageDetectionService,
-    ModelRouter,
+    ModelClient,
     PromptTemplateService,
     StoryRepository,
     UserInputService,
@@ -52,7 +52,7 @@ class StoryOrchestrator:
     doc_pipeline: DocumentIntelligencePipeline
     analysis_facade: AnalysisFacade
     prompt_controller: PromptSelectionController
-    model_router: ModelRouter
+    model_client: ModelClient
     image_pipeline: ImageAssetPipeline
     voice_service: VoiceSynthesisService
     repository: StoryRepository
@@ -89,7 +89,7 @@ class StoryOrchestrator:
         
         try:
             # CRITICAL LAYER 1: Create mode-specific document pipeline with mode-specific URL extractor
-            # This ensures News and Curious modes have isolated caches
+            # Keep URL extraction isolated per mode identifier.
             from app.services.url_extractor import URLContentExtractor
             from app.services.document_intelligence import DefaultDocumentIntelligencePipeline
             from app.core import get_settings
@@ -240,7 +240,7 @@ class StoryOrchestrator:
         try:
             rendered_prompt = self.prompt_controller.select_prompt(
                 mode=payload.mode.value,
-                category=request.category or ("News" if payload.mode == Mode.NEWS else "Art"),
+                category=request.category or "News",
                 language=language.language_code,
                 analysis=analysis,
                 keywords=payload.prompt_keywords,
@@ -251,33 +251,14 @@ class StoryOrchestrator:
             raise ValueError(f"Prompt rendering failed: {e}") from e
 
         try:
-            model_client = self.model_router.route(payload.mode)
-            # Pass slide_count and metadata to NewsModelClient if it's NEWS mode
-            if payload.mode == Mode.NEWS and hasattr(model_client, 'generate'):
-                # For NewsModelClient, pass slide_count and category metadata
-                narrative = model_client.generate(
-                    rendered_prompt,
-                    doc_insights,
-                    slide_count=payload.slide_count,
-                    category=request.category,
-                    subcategory=None,  # Will be detected automatically
-                    emotion=None,  # Will be detected automatically
-                )
-            elif payload.mode == Mode.CURIOUS and hasattr(model_client, 'generate'):
-                # For CuriousModelClient, pass slide_count if available
-                # Note: CuriousModelClient may not support slide_count yet, but we pass it for future compatibility
-                try:
-                    narrative = model_client.generate(
-                        rendered_prompt,
-                        doc_insights,
-                        slide_count=payload.slide_count,
-                    )
-                except TypeError:
-                    # Fallback if slide_count parameter not supported yet
-                    logger.debug("CuriousModelClient doesn't support slide_count yet, using default")
-                    narrative = model_client.generate(rendered_prompt, doc_insights)
-            else:
-                narrative = model_client.generate(rendered_prompt, doc_insights)
+            narrative = self.model_client.generate(
+                rendered_prompt,
+                doc_insights,
+                slide_count=payload.slide_count,
+                category=request.category,
+                subcategory=None,
+                emotion=None,
+            )
             logger.debug("Narrative generated, slides: %d", len(narrative.slide_deck.slides))
         except Exception as e:
             logger.error("Narrative generation failed: %s", e, exc_info=True)
@@ -324,17 +305,14 @@ class StoryOrchestrator:
                     
                     # Regenerate narrative with URL context
                     try:
-                        if payload.mode == Mode.NEWS and hasattr(model_client, 'generate'):
-                            narrative = model_client.generate(
-                                rendered_prompt,
-                                doc_insights,
-                                slide_count=payload.slide_count,
-                                category=request.category,
-                                subcategory=None,
-                                emotion=None,
-                            )
-                        else:
-                            narrative = model_client.generate(rendered_prompt, doc_insights)
+                        narrative = self.model_client.generate(
+                            rendered_prompt,
+                            doc_insights,
+                            slide_count=payload.slide_count,
+                            category=request.category,
+                            subcategory=None,
+                            emotion=None,
+                        )
                         logger.warning(f"✅ Regenerated story with URL context: {narrative.slide_deck.slides[0].text[:100] if narrative.slide_deck.slides else 'None'}")
                     except Exception as regen_error:
                         logger.error(f"❌ Regeneration failed: {regen_error}, continuing with original narrative")
@@ -353,30 +331,8 @@ class StoryOrchestrator:
             article_content = " ".join([chunk.text for chunk in doc_insights.semantic_chunks if chunk.text])
             logger.debug(f"Extracted article content for image generation: {len(article_content)} characters")
 
-        # For Curious mode, extract alt texts from narrative and pass to image pipeline
-        # For News mode, pass article content for relevant image generation
         updated_payload = payload  # Default to original payload
-        if payload.mode == Mode.CURIOUS and hasattr(narrative, "raw_output"):
-            try:
-                import json
-                narrative_json = json.loads(narrative.raw_output) if isinstance(narrative.raw_output, str) else narrative.raw_output
-                if isinstance(narrative_json, dict):
-                    # Properly update Pydantic model metadata (create new instance)
-                    updated_metadata = dict(payload.metadata) if payload.metadata else {}
-                    updated_metadata["narrative_json"] = narrative_json
-                    # Create new payload with updated metadata
-                    updated_payload = payload.model_copy(update={"metadata": updated_metadata})
-                    logger.debug("Extracted alt texts from Curious narrative for image generation")
-                    logger.debug(f"Narrative JSON has keys: {list(narrative_json.keys())[:15]}")
-                    # Log alt text availability
-                    alt_keys = [k for k in narrative_json.keys() if "alt1" in k]
-                    logger.debug(f"Found alt text keys: {alt_keys}")
-                    logger.info(f"Updated payload metadata with narrative_json for {len(alt_keys)} alt texts")
-            except Exception as e:
-                logger.warning("Failed to extract alt texts from narrative: %s", e, exc_info=True)
-        
-        # For News mode, add article content to metadata for image generation
-        if payload.mode == Mode.NEWS and article_content:
+        if article_content:
             try:
                 updated_metadata = dict(updated_payload.metadata) if updated_payload.metadata else {}
                 updated_metadata["article_content"] = article_content
@@ -428,9 +384,8 @@ class StoryOrchestrator:
         story_id = self.id_factory()
         created_at = datetime.utcnow()
         
-        # Get story title for URL generation (News and Curious modes use title-based URLs)
         story_title = None
-        if payload.mode in [Mode.NEWS, Mode.CURIOUS] and narrative.slide_deck.slides:
+        if narrative.slide_deck.slides:
             story_title = narrative.slide_deck.slides[0].text or None
         
         canurl, canurl1 = self._build_canurls(story_id, story_title=story_title, mode=payload.mode)
@@ -446,8 +401,7 @@ class StoryOrchestrator:
             slide_deck=narrative.slide_deck,
             image_assets=image_assets,
             voice_assets=voice_assets,
-            prompt_news=rendered_prompt.user if payload.mode == Mode.NEWS else None,
-            prompt_curious=rendered_prompt.user if payload.mode == Mode.CURIOUS else None,
+            prompt_news=rendered_prompt.user,
             canurl=canurl,
             canurl1=canurl1,
             created_at=created_at,
@@ -483,8 +437,7 @@ class StoryOrchestrator:
                 logger = logging.getLogger(__name__)
                 logger.info("HTML saved to: %s", html_file_path)
                 
-                # For News and Curious modes, upload HTML to S3 bucket "suvichaarstories" with slug-based filename
-                if payload.mode in [Mode.NEWS, Mode.CURIOUS] and record.canurl1:
+                if record.canurl1:
                     try:
                         # Extract slug filename from canurl1: https://suvichaar.org/stories/slug_nano.html -> slug_nano.html
                         canurl1_str = str(record.canurl1)
@@ -598,7 +551,7 @@ class StoryOrchestrator:
         """
         Build canonical URLs for the story.
         
-        For News and Curious modes: Uses title-based slug + date/time UUID format
+        For News mode: Uses title-based slug + date/time UUID format
         Matching JavaScript createSlugWithUUID function:
         - Slug from title (lowercase, hyphens, alphanumeric only)
         - UUID from date/time: ddmmyyhhminssms (14 digits)
@@ -609,7 +562,7 @@ class StoryOrchestrator:
         Args:
             story_id: UUID of the story
             story_title: Story title (used for News mode slug generation)
-            mode: Story mode (News or Curious)
+            mode: Story mode
         
         Returns:
             Tuple of (canurl, canurl1)
@@ -618,8 +571,8 @@ class StoryOrchestrator:
         """
         logger = logging.getLogger(__name__)
         
-        # For News and Curious modes, ALWAYS use title-based slug + date/time UUID format
-        if mode in [Mode.NEWS, Mode.CURIOUS]:
+        # News stories always use title-based slug + date/time UUID format.
+        if mode == Mode.NEWS:
             try:
                 # Step 1: Generate slug from title
                 if story_title and story_title.strip():

@@ -50,11 +50,12 @@ logger.info("=" * 60)
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 
 from app.api.schemas import StoryCreateRequest, StoryResponse
 from app.core import get_settings
 from app.domain.dto import AttachmentDescriptor, Mode
-from app.domain.interfaces import PromptTemplateService
+from app.domain.interfaces import ModelClient, PromptTemplateService
 from app.persistence import Base, SqlAlchemyStoryRepository, create_session_factory
 from app.services.analysis import CompositeAnalysisFacade, HeuristicFunctionAnalyzer, PromptRecommendationAnalyzer
 from app.services.document_intelligence import (
@@ -75,10 +76,10 @@ from app.services.language_detection import (
     LanguageDetectionStrategy,
 )
 from app.services.azure_openai_client import AzureOpenAILanguageModel
-from app.services.model_clients import CuriousModelClient, LanguageModel, NewsModelClient
-from app.services.model_router import DefaultModelRouter
+from app.services.model_clients import LanguageModel, NewsModelClient
 from app.services.orchestrator import StoryOrchestrator
 from app.services.prompt_templates import DefaultPromptTemplateService, PromptSelectionController
+from app.services.template_registry import list_template_definitions
 from app.services.user_input import DefaultUserInputService
 from app.services.voice_synthesis import (
     AzureTTSClient,
@@ -90,11 +91,9 @@ from app.services.html_renderer import HTMLTemplateRenderer
 from app.utils import is_placeholder_value
 
 
-app = FastAPI(title="NewsLab Service v2")
+app = FastAPI(title="Engine Service News Backend")
 
 # Add custom exception handler for better error messages
-from fastapi.responses import JSONResponse
-
 @app.on_event("startup")
 async def startup_event():
     """Initialize orchestrator at startup to show config logs immediately."""
@@ -141,6 +140,21 @@ class EchoLanguageModel(LanguageModel):
 @lru_cache(maxsize=1)
 def get_prompt_service() -> PromptTemplateService:
     return DefaultPromptTemplateService()
+
+
+@lru_cache(maxsize=1)
+def get_model_client() -> ModelClient:
+    settings = get_settings()
+    if settings.azure_api and not is_placeholder_value(settings.azure_api.api_key):
+        language_model: LanguageModel = AzureOpenAILanguageModel(
+            endpoint=settings.azure_api.endpoint,
+            api_key=settings.azure_api.api_key,
+            deployment=settings.azure_api.deployment,
+            api_version=settings.azure_api.api_version,
+        )
+    else:
+        language_model = EchoLanguageModel()
+    return NewsModelClient(language_model=language_model)
 
 
 @lru_cache(maxsize=1)
@@ -191,20 +205,8 @@ def get_orchestrator() -> StoryOrchestrator:
     )
     prompt_service = get_prompt_service()
     prompt_controller = PromptSelectionController(prompt_service)
-
-    # Use Azure OpenAI if credentials are available, otherwise fallback to stub
-    if settings.azure_api and not is_placeholder_value(settings.azure_api.api_key):
-        language_model = AzureOpenAILanguageModel(
-            endpoint=settings.azure_api.endpoint,
-            api_key=settings.azure_api.api_key,
-            deployment=settings.azure_api.deployment,
-            api_version=settings.azure_api.api_version,
-        )
-    else:
-        language_model = EchoLanguageModel()
-    curious_client = CuriousModelClient(language_model=language_model)
-    news_client = NewsModelClient(language_model=language_model)
-    model_router = DefaultModelRouter({Mode.CURIOUS: curious_client, Mode.NEWS: news_client})
+    model_client = get_model_client()
+    language_model = getattr(model_client, "_language_model", EchoLanguageModel())
 
     image_providers = []
     if settings.ai_image and not (
@@ -323,7 +325,7 @@ def get_orchestrator() -> StoryOrchestrator:
         doc_pipeline=doc_pipeline,
         analysis_facade=analysis,
         prompt_controller=prompt_controller,
-        model_router=model_router,
+        model_client=model_client,
         image_pipeline=image_pipeline,
         voice_service=voice_service,
         repository=repository,
@@ -454,6 +456,8 @@ def _load_from_azure_blob(blob_url: str, logger: logging.Logger) -> Optional[byt
 @app.post("/stories", response_model=StoryResponse)
 def create_story(request: StoryCreateRequest, orchestrator: StoryOrchestrator = Depends(get_orchestrator)):
     logger = logging.getLogger(__name__)
+    if request.mode != Mode.NEWS:
+        raise HTTPException(status_code=400, detail="Only news mode is supported by this backend.")
     logger.warning("📥 Received story request: mode=%s image_source=%s voice_engine=%s", 
                    request.mode.value, request.image_source, request.voice_engine)
     print(f"\n{'='*60}")
@@ -512,8 +516,8 @@ def get_story(story_id: str, orchestrator: StoryOrchestrator = Depends(get_orche
 
 
 @app.get("/templates", response_model=List[str])
-def list_templates(prompt_service: PromptTemplateService = Depends(get_prompt_service)):
-    return [info.mode for info in prompt_service.list_templates()]
+def list_templates():
+    return sorted(definition.key for definition in list_template_definitions(Mode.NEWS))
 
 
 @app.get("/health")

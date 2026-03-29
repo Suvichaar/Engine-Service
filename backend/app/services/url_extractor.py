@@ -36,7 +36,7 @@ class URLContentExtractor:
 
     def __init__(self, logger: Optional[logging.Logger] = None, mode: Optional[str] = None, api_key: Optional[str] = None):
         self._logger = logger or logging.getLogger(__name__)
-        self._mode = mode  # "news" or "curious" for mode-specific isolation
+        self._mode = mode  # Reserved for request-scoped extraction context.
         # Get API key from parameter, environment variable, or raise error
         # Priority: parameter > environment variable > error
         self._serper_api_key = api_key or os.getenv("SERPER_API_KEY")

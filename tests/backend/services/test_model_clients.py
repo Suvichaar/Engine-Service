@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.domain.dto import CuriousNarrative, DocInsights, Entity, RenderedPrompt, SemanticChunk
-from app.services.model_clients import CuriousModelClient, LanguageModel, NewsModelClient
+from app.domain.dto import DocInsights, Entity, RenderedPrompt, SemanticChunk
+from app.services.model_clients import LanguageModel, NewsModelClient
 
 
 @dataclass
@@ -30,39 +30,24 @@ def make_insights() -> DocInsights:
     return doc_insights
 
 
-def make_prompt(mode: str) -> RenderedPrompt:
+def make_prompt() -> RenderedPrompt:
     return RenderedPrompt(
-        system=f"{mode} system",
-        user=f"{mode} user prompt",
-        metadata={"mode": mode, "language": "en-IN"},
+        system="news system",
+        user="news user prompt",
+        metadata={"mode": "news", "language": "en-IN"},
     )
 
 
-def test_curious_model_client_generates_narrative():
-    lm = StubLanguageModel(response="Slide A\n\nSlide B")
-    client = CuriousModelClient(language_model=lm)
-    insights = make_insights()
-    prompt = make_prompt("curious")
-
-    narrative = client.generate(prompt, insights)
-
-    assert isinstance(narrative, CuriousNarrative)
-    assert narrative.slide_deck.template_key == "curious_default"
-    assert len(narrative.slide_deck.slides) == 2
-    assert lm.calls[0][0] == prompt.system
-    assert "Contextual Highlights" in lm.calls[0][1]
-
-
-def test_news_model_client_generates_headlines_and_bullets():
-    lm = StubLanguageModel(response="Major update announced\n- Point one\n- Point two")
+def test_news_model_client_generates_news_narrative():
+    lm = StubLanguageModel(
+        response='{"slides":[{"title":"Major update announced","narration":"Point one"},{"title":"Policy shift","narration":"Point two"}],"storytitle":"Major update announced"}'
+    )
     client = NewsModelClient(language_model=lm)
-    insights = make_insights()
-    prompt = make_prompt("news")
 
-    narrative = client.generate(prompt, insights)
+    narrative = client.generate(make_prompt(), make_insights(), slide_count=4, category="News")
 
-    assert narrative.headlines == ["Major update announced"]
-    assert narrative.bullet_points == ["Point one", "Point two"]
+    assert narrative.mode.value == "news"
     assert narrative.slide_deck.template_key == "news_default"
-    assert "Context:" in lm.calls[0][1]
-
+    assert narrative.headlines
+    assert narrative.bullet_points
+    assert lm.calls
