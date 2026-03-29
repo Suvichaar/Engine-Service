@@ -1,0 +1,23 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+httpx
+sqlalchemy
+psycopg[binary]
+boto3
+pillow
+requests
+tomli; python_version < "3.11"
+azure-keyvault-secrets
+azure-identity
+azure-ai-formrecognizer
+openai
+python-dotenv
+nltk
+newspaper3k
+PyPDF2
+python-docx
+azure-cognitiveservices-speech
+pytest
+pytest-asyncio
