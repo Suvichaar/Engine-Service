@@ -363,10 +363,12 @@ class PlaceholderMapper:
         # URLs
         placeholders["canurl"] = str(record.canurl) if record.canurl else ""
         placeholders["canurl1"] = str(record.canurl1) if record.canurl1 else ""
-        # Timestamps - ISO 8601 format with Z suffix (e.g., "2025-01-21T10:30:00.000000Z")
+        # Timestamps - preserve ISO values for metadata and add display-friendly values for templates.
         iso_time = record.created_at.isoformat() + "Z"
         placeholders["publishedtime"] = iso_time
         placeholders["modifiedtime"] = iso_time
+        placeholders["publisheddate_display"] = record.created_at.strftime("%d %b %Y")
+        placeholders["publishedclock_display"] = record.created_at.strftime("%I:%M %p").lstrip("0")
         # Branding
         logo_base = "https://media.suvichaar.org/filters:resize"
         placeholders["sitelogo32x32"] = f"{logo_base}/32x32/media/brandasset/suvichaariconblack.png"
@@ -1003,4 +1005,3 @@ class HTMLTemplateRenderer:
 
 
 __all__ = ["HTMLTemplateRenderer", "TemplateLoader", "PlaceholderMapper"]
-
