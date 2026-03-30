@@ -4,4 +4,6 @@ __pycache__/
 .mypy_cache/
 .DS_Store
 stories.db
+.env
+backend/.env
 backend/app/core/settings.local.toml

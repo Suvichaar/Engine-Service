@@ -8,6 +8,7 @@ import logging
 import re
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
@@ -94,11 +95,18 @@ class PlaceholderMapper:
 
     def __init__(
         self,
-        default_bg_image: str = "https://media.suvichaar.org/upload/polaris/polarisslide.png",
-        default_cover_image: str = "https://media.suvichaar.org/upload/polaris/polariscover.png",
-        organization: str = "Suvichaar",
-        cdn_prefix_media: str = "https://media.suvichaar.org/",
-        aws_bucket: str = "suvichaarapp",
+        default_bg_image: str = "https://media.example.org/default-bg.png",
+        default_cover_image: str = "https://media.example.org/default-cover.png",
+        organization: str = "Example",
+        cdn_prefix_media: str = "https://media.example.org/",
+        aws_bucket: str = "example-bucket",
+        publisher_logo_src: str = "https://media.example.org/logo.png",
+        user_name: str = "Editorial Team",
+        user_profile_url: str = "https://example.org",
+        site_logo_base: str = "https://media.example.org/filters:resize",
+        analytics_id: str = "",
+        adsense_client_id: str = "",
+        adsense_slot_id: str = "",
         language_model: Optional[LanguageModel] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
@@ -107,6 +115,13 @@ class PlaceholderMapper:
         self._organization = organization
         self._cdn_prefix_media = cdn_prefix_media.rstrip("/") + "/"
         self._aws_bucket = aws_bucket
+        self._publisher_logo_src = publisher_logo_src
+        self._user_name = user_name
+        self._user_profile_url = user_profile_url
+        self._site_logo_base = site_logo_base.rstrip("/")
+        self._analytics_id = analytics_id
+        self._adsense_client_id = adsense_client_id
+        self._adsense_slot_id = adsense_slot_id
         self._language_model = language_model
         self._logger = logger or logging.getLogger(__name__)
 
@@ -335,7 +350,7 @@ class PlaceholderMapper:
         placeholders["publishedtime"] = iso_time
         placeholders["modifiedtime"] = iso_time
         # Branding
-        logo_base = "https://media.suvichaar.org/filters:resize"
+        logo_base = self._site_logo_base
         placeholders["sitelogo32x32"] = f"{logo_base}/32x32/media/brandasset/suvichaariconblack.png"
         placeholders["sitelogo192x192"] = f"{logo_base}/192x192/media/brandasset/suvichaariconblack.png"
         placeholders["sitelogo180x180"] = f"{logo_base}/180x180/media/brandasset/suvichaariconblack.png"
@@ -343,10 +358,14 @@ class PlaceholderMapper:
         placeholders["sitelogo96x96"] = f"{logo_base}/96x96/media/brandasset/suvichaariconblack.png"
         placeholders["organization"] = self._organization
         placeholders["publisher"] = self._organization
-        placeholders["publisherlogosrc"] = "https://media.suvichaar.org/media/designasset/brandasset/icons/quaternary/whitequaternaryicon.png"
+        placeholders["publisherlogosrc"] = self._publisher_logo_src
         # Additional placeholders (optional)
-        placeholders["user"] = "Suvichaar Team"
-        placeholders["userprofileurl"] = "https://suvichaar.org"
+        placeholders["user"] = self._user_name
+        placeholders["userprofileurl"] = self._user_profile_url
+        placeholders["organizationdomain"] = urlparse(self._user_profile_url).netloc or self._user_profile_url
+        placeholders["analyticsid"] = self._analytics_id
+        placeholders["adsenseclientid"] = self._adsense_client_id
+        placeholders["adsenseslotid"] = self._adsense_slot_id
         placeholders["prevstorytitle"] = ""
         placeholders["prevstorylink"] = ""
         placeholders["nextstorytitle"] = ""
@@ -387,7 +406,7 @@ class PlaceholderMapper:
             # Extract S3 key from URL if it's a CDN URL
             # For default images, we might need to construct the S3 key
             # For now, if it's a media.suvichaar.org URL, try to extract path
-            if "media.suvichaar.org" in image_url:
+            if self._cdn_prefix_media in image_url:
                 # Extract the path after the domain
                 from urllib.parse import urlparse
                 parsed = urlparse(image_url)
@@ -484,7 +503,7 @@ Meta Description:"""
             if len(first_slide) > 160:
                 return first_slide[:157] + "..."
             return first_slide
-        return f"Explore this {record.category or 'story'} on Suvichaar."
+        return f"Explore this {record.category or 'story'} on {self._organization}."
 
     def _generate_meta_keywords(self, record: StoryRecord) -> str:
         """Generate SEO keywords using LLM if available, else fallback."""
@@ -560,14 +579,34 @@ class HTMLTemplateRenderer:
         template_loader: Optional[TemplateLoader] = None,
         placeholder_mapper: Optional[PlaceholderMapper] = None,
         language_model: Optional[LanguageModel] = None,
-        cdn_prefix_media: str = "https://media.suvichaar.org/",
-        aws_bucket: str = "suvichaarapp",
+        cdn_prefix_media: str = "https://media.example.org/",
+        aws_bucket: str = "example-bucket",
+        default_bg_image: str = "https://media.example.org/default-bg.png",
+        default_cover_image: str = "https://media.example.org/default-cover.png",
+        organization: str = "Example",
+        publisher_logo_src: str = "https://media.example.org/logo.png",
+        user_name: str = "Editorial Team",
+        user_profile_url: str = "https://example.org",
+        site_logo_base: str = "https://media.example.org/filters:resize",
+        analytics_id: str = "",
+        adsense_client_id: str = "",
+        adsense_slot_id: str = "",
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._loader = template_loader or TemplateLoader(template_base_path=template_base_path)
         self._mapper = placeholder_mapper or PlaceholderMapper(
+            default_bg_image=default_bg_image,
+            default_cover_image=default_cover_image,
+            organization=organization,
             cdn_prefix_media=cdn_prefix_media,
             aws_bucket=aws_bucket,
+            publisher_logo_src=publisher_logo_src,
+            user_name=user_name,
+            user_profile_url=user_profile_url,
+            site_logo_base=site_logo_base,
+            analytics_id=analytics_id,
+            adsense_client_id=adsense_client_id,
+            adsense_slot_id=adsense_slot_id,
             language_model=language_model,
         )
         self._logger = logger or logging.getLogger(__name__)
@@ -659,7 +698,7 @@ class HTMLTemplateRenderer:
         # Final check: Ensure potraitcoverurl is replaced (critical for cover and CTA)
         if "{{potraitcoverurl}}" in filled_html:
             self._logger.error("CRITICAL: potraitcoverurl still not replaced after cleanup! Replacing with default.")
-            default_url = "https://media.suvichaar.org/upload/polaris/polariscover.png"
+            default_url = self._mapper._default_cover_image
             filled_html = filled_html.replace("{{potraitcoverurl}}", default_url)
             filled_html = filled_html.replace("{{portraitcoverurl}}", default_url)
 
@@ -702,7 +741,7 @@ class HTMLTemplateRenderer:
         self._logger.info("Generating slides for mode=%s, template=%s, slide_count=%d, available_slides=%d", 
                          record.mode.value, template_key, record.slide_count, len(record.slide_deck.slides))
         slides = []
-        default_bg = "https://media.suvichaar.org/upload/polaris/polarisslide.png"
+        default_bg = self._mapper._default_bg_image
 
         # Get template-specific slide generator
         slide_generator = get_slide_generator(template_key)

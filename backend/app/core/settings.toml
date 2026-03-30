@@ -27,3 +27,25 @@ DEFAULT_ERROR_IMAGE = "https://media.example.org/default-error.jpg"
 
 [database]
 DATABASE_URL = "sqlite:///./stories.db"
+
+[story]
+STORY_BASE_URL = "https://stories.example.org"
+HTML_BUCKET = "example-html-bucket"
+
+[branding]
+ORGANIZATION = "Example"
+PUBLISHER_LOGO_SRC = "https://media.example.org/logo.png"
+USER_NAME = "Editorial Team"
+USER_PROFILE_URL = "https://example.org"
+SITE_LOGO_BASE = "https://media.example.org/filters:resize"
+DEFAULT_BG_IMAGE = "https://media.example.org/default-bg.png"
+DEFAULT_COVER_IMAGE = "https://media.example.org/default-cover.png"
+PLACEHOLDER_AUDIO_URL = "https://media.example.org/placeholder-audio.mp3"
+
+[fastapi]
+BASE_URL = "http://localhost:8000"
+
+[analytics]
+GOOGLE_ANALYTICS_ID = ""
+ADSENSE_CLIENT_ID = ""
+ADSENSE_SLOT_ID = ""

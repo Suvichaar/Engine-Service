@@ -402,6 +402,8 @@ class StoryOrchestrator:
             image_assets=image_assets,
             voice_assets=voice_assets,
             prompt_news=rendered_prompt.user,
+            prompt_version=rendered_prompt.metadata.get("prompt_version"),
+            prompt_file=rendered_prompt.metadata.get("prompt_file"),
             canurl=canurl,
             canurl1=canurl1,
             created_at=created_at,
@@ -441,15 +443,16 @@ class StoryOrchestrator:
                     try:
                         # Extract slug filename from canurl1: https://suvichaar.org/stories/slug_nano.html -> slug_nano.html
                         canurl1_str = str(record.canurl1)
-                        if "suvichaar.org/stories/" in canurl1_str:
-                            slug_filename = canurl1_str.split("suvichaar.org/stories/")[-1]
+                        if self.story_base_url and canurl1_str.startswith(self.story_base_url.rstrip("/") + "/"):
+                            slug_filename = canurl1_str.split(self.story_base_url.rstrip("/") + "/")[-1]
                             # slug_filename should be like "tragic-accident-near-navale-bridge-leaves-several-dead-and-injured-in-pune_KKd2kdX729_G.html"
                             
                             # Get AWS settings
                             from app.core import get_settings
                             settings = get_settings()
+                            html_bucket = settings.story.html_bucket or settings.aws.bucket
                             
-                            # Upload to S3 bucket "suvichaarstories" with slug-based filename
+                            # Upload rendered HTML using configured slug-based filename
                             import boto3
                             s3_client = boto3.client(
                                 "s3",
@@ -459,13 +462,13 @@ class StoryOrchestrator:
                             )
                             
                             s3_client.put_object(
-                                Bucket="suvichaarstories",
+                                Bucket=html_bucket,
                                 Key=slug_filename,  # Use slug-based filename (e.g., "slug_nano.html")
                                 Body=html_content.encode("utf-8"),
                                 ContentType="text/html; charset=utf-8",
                             )
                             
-                            logger.info("Uploaded HTML to S3: s3://suvichaarstories/%s", slug_filename)
+                            logger.info("Uploaded HTML to S3: s3://%s/%s", html_bucket, slug_filename)
                     except ImportError:
                         logger.warning("boto3 not installed, S3 HTML upload skipped")
                     except Exception as e:
@@ -505,8 +508,12 @@ class StoryOrchestrator:
                 slug = slug[:-5]
         
         # Try to find by canurl (without .html)
-        canurl = f"https://suvichaar.org/stories/{slug}"
-        canurl1 = f"https://suvichaar.org/stories/{slug}.html"
+        if not self.story_base_url:
+            logger.error("Story base URL is not configured.")
+            raise KeyError(f"Story with slug {slug} not found.")
+        base_url = self.story_base_url.rstrip("/")
+        canurl = f"{base_url}/{slug}"
+        canurl1 = f"{base_url}/{slug}.html"
         
         try:
             # First try exact match with canurl
@@ -605,8 +612,10 @@ class StoryOrchestrator:
                 # Step 3: Concatenate slug and UUID (no "_G" suffix)
                 slug_uuid = f"{slug}_{uuid_str}"
                 
-                # ALWAYS use hardcoded base URL: https://suvichaar.org/stories
-                base_url = "https://suvichaar.org/stories"
+                if not self.story_base_url:
+                    logger.warning("No story_base_url configured, skipping canonical URL generation")
+                    return None, None
+                base_url = self.story_base_url.rstrip("/")
                 
                 # canurl: without .html extension (for display)
                 canurl = f"{base_url}/{slug_uuid}"
@@ -633,7 +642,9 @@ class StoryOrchestrator:
                     
                     slug = f"story-{str(story_id).replace('-', '')[:16]}"
                     slug_uuid = f"{slug}_{uuid_str}"
-                    base_url = "https://suvichaar.org/stories"
+                    if not self.story_base_url:
+                        return None, None
+                    base_url = self.story_base_url.rstrip("/")
                     
                     canurl = f"{base_url}/{slug_uuid}"
                     canurl1 = f"{base_url}/{slug_uuid}.html"

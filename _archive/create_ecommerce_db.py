@@ -9,6 +9,7 @@ Usage:
 """
 
 import sys
+import os
 from pathlib import Path
 
 # Add the project root to the path
@@ -19,11 +20,11 @@ from app.persistence.ecommerce_models import create_all_tables, Base
 
 # Database configuration for Azure PostgreSQL
 DATABASE_CONFIG = {
-    "host": "suvichaarpgrawstagedbserver.postgres.database.azure.com",
-    "dbname": "postgres",
-    "user": "suvichaarrawstage_db_admin",
-    "password": "Thinkpure008",
-    "port": 5432
+    "host": os.getenv("ARCHIVE_DB_HOST", "your-postgres-host"),
+    "dbname": os.getenv("ARCHIVE_DB_NAME", "postgres"),
+    "user": os.getenv("ARCHIVE_DB_USER", "your-db-user"),
+    "password": os.getenv("ARCHIVE_DB_PASSWORD", "your-db-password"),
+    "port": int(os.getenv("ARCHIVE_DB_PORT", "5432")),
 }
 
 

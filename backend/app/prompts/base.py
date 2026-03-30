@@ -10,9 +10,11 @@ from typing import List, Mapping
 class PromptTemplate:
     """Structured representation of a prompt definition."""
 
+    mode: str
+    version: str
     system: str
     user_template: str
     allowed_categories: List[str]
     description: str | None = None
+    status: str | None = None
     extra: Mapping[str, str] | None = None
-

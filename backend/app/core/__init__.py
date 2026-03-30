@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional
 
 try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover
+    load_dotenv = None
+
+try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore
@@ -24,7 +29,18 @@ except ImportError:
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = BASE_DIR / "core" / "settings.toml"
+PROJECT_ROOT = BASE_DIR.parents[1]
 
+
+def _load_dotenv_files() -> None:
+    """Load local `.env` files before reading environment overrides."""
+
+    if load_dotenv is None:
+        return
+
+    for candidate in (PROJECT_ROOT / ".env", BASE_DIR.parent / ".env"):
+        if candidate.exists():
+            load_dotenv(candidate, override=False)
 
 class AzureAPISettings(BaseModel):
     endpoint: str
@@ -59,7 +75,7 @@ class AWSSettings(BaseModel):
     cdn_prefix_media: str
     cdn_html_base: str
     cdn_base: str
-    default_error_image: str = "https://media.suvichaar.org/default-error.jpg"  # Default error image URL
+    default_error_image: str = "https://media.example.org/default-error.jpg"
 
 
 class AIImageSettings(BaseModel):
@@ -99,6 +115,32 @@ class DatabaseSettings(BaseModel):
     url: str = "sqlite:///./stories.db"
 
 
+class StorySettings(BaseModel):
+    base_url: str = "https://stories.example.org"
+    html_bucket: str = ""
+
+
+class BrandingSettings(BaseModel):
+    organization: str = "Example"
+    publisher_logo_src: str = "https://media.example.org/logo.png"
+    user_name: str = "Editorial Team"
+    user_profile_url: str = "https://example.org"
+    site_logo_base: str = "https://media.example.org/filters:resize"
+    default_bg_image: str = "https://media.example.org/default-bg.png"
+    default_cover_image: str = "https://media.example.org/default-cover.png"
+    placeholder_audio_url: str = "https://media.example.org/placeholder-audio.mp3"
+
+
+class FastAPISettings(BaseModel):
+    base_url: str = "http://localhost:8000"
+
+
+class AnalyticsSettings(BaseModel):
+    google_analytics_id: str = ""
+    adsense_client_id: str = ""
+    adsense_slot_id: str = ""
+
+
 class AppSettings(BaseModel):
     azure_api: AzureAPISettings
     dalle: DalleSettings = DalleSettings()  # Optional with defaults - ai_image is preferred
@@ -113,6 +155,10 @@ class AppSettings(BaseModel):
     azure_voice: AzureVoiceSettings | None = None
     voice_storage: VoiceStorageSettings | None = None
     database: DatabaseSettings = DatabaseSettings()
+    story: StorySettings = StorySettings()
+    branding: BrandingSettings = BrandingSettings()
+    fastapi: FastAPISettings = FastAPISettings()
+    analytics: AnalyticsSettings = AnalyticsSettings()
 
 
 def _load_toml(path: Path) -> Dict[str, Any]:
@@ -195,6 +241,28 @@ def _env_override() -> Dict[str, Any]:
         },
         "database": {
             "url": get_env_with_fallback("DATABASE_URL"),
+        },
+        "story": {
+            "base_url": get_env_with_fallback("STORY_BASE_URL"),
+            "html_bucket": get_env_with_fallback("HTML_BUCKET"),
+        },
+        "branding": {
+            "organization": get_env_with_fallback("ORGANIZATION"),
+            "publisher_logo_src": get_env_with_fallback("PUBLISHER_LOGO_SRC"),
+            "user_name": get_env_with_fallback("USER_NAME"),
+            "user_profile_url": get_env_with_fallback("USER_PROFILE_URL"),
+            "site_logo_base": get_env_with_fallback("SITE_LOGO_BASE"),
+            "default_bg_image": get_env_with_fallback("DEFAULT_BG_IMAGE"),
+            "default_cover_image": get_env_with_fallback("DEFAULT_COVER_IMAGE"),
+            "placeholder_audio_url": get_env_with_fallback("PLACEHOLDER_AUDIO_URL"),
+        },
+        "fastapi": {
+            "base_url": get_env_with_fallback("BASE_URL"),
+        },
+        "analytics": {
+            "google_analytics_id": get_env_with_fallback("GOOGLE_ANALYTICS_ID"),
+            "adsense_client_id": get_env_with_fallback("ADSENSE_CLIENT_ID"),
+            "adsense_slot_id": get_env_with_fallback("ADSENSE_SLOT_ID"),
         },
     }
     # Filter out None values but keep empty strings (which are valid values)
@@ -285,6 +353,28 @@ SECTION_MAPPING: Dict[str, Dict[str, str]] = {
     "database": {
         "DATABASE_URL": "url",
     },
+    "story": {
+        "STORY_BASE_URL": "base_url",
+        "HTML_BUCKET": "html_bucket",
+    },
+    "branding": {
+        "ORGANIZATION": "organization",
+        "PUBLISHER_LOGO_SRC": "publisher_logo_src",
+        "USER_NAME": "user_name",
+        "USER_PROFILE_URL": "user_profile_url",
+        "SITE_LOGO_BASE": "site_logo_base",
+        "DEFAULT_BG_IMAGE": "default_bg_image",
+        "DEFAULT_COVER_IMAGE": "default_cover_image",
+        "PLACEHOLDER_AUDIO_URL": "placeholder_audio_url",
+    },
+    "fastapi": {
+        "BASE_URL": "base_url",
+    },
+    "analytics": {
+        "GOOGLE_ANALYTICS_ID": "google_analytics_id",
+        "ADSENSE_CLIENT_ID": "adsense_client_id",
+        "ADSENSE_SLOT_ID": "adsense_slot_id",
+    },
 }
 
 
@@ -311,6 +401,8 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
     """
 
     path = config_path or DEFAULT_CONFIG_PATH
+    if config_path is None:
+        _load_dotenv_files()
     data: Dict[str, Any] = _normalize_config(_load_toml(path))
     
     # Priority: Key Vault > Environment Variables > TOML file
@@ -329,7 +421,7 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
         if "html_s3_prefix" not in aws_dict:
             aws_dict["html_s3_prefix"] = ""
         if "default_error_image" not in aws_dict:
-            aws_dict["default_error_image"] = "https://media.suvichaar.org/default-error.jpg"
+            aws_dict["default_error_image"] = "https://media.example.org/default-error.jpg"
     
     # Ensure dalle section has defaults if missing
     if "dalle" not in merged:
@@ -376,7 +468,16 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
     
     # Note: Serper API key should be set via environment variable
     # In Azure Container Apps, set: SERPER_API_KEY or serper-api-key
-    
+
+    if "story" not in merged:
+        merged["story"] = {}
+    if "branding" not in merged:
+        merged["branding"] = {}
+    if "fastapi" not in merged:
+        merged["fastapi"] = {}
+    if "analytics" not in merged:
+        merged["analytics"] = {}
+
     return AppSettings(**merged)
 
 
@@ -401,6 +502,10 @@ __all__ = [
     "AzureVoiceSettings",
     "VoiceStorageSettings",
     "DatabaseSettings",
+    "StorySettings",
+    "BrandingSettings",
+    "FastAPISettings",
+    "AnalyticsSettings",
     "get_settings",
     "load_settings",
 ]

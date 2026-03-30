@@ -17,9 +17,12 @@ class DefaultPromptTemplateService(PromptTemplateService):
         config = get_prompt_config("news")
         yield PromptTemplateInfo(
             mode="news",
+            version=config.version,
             description=getattr(config, "description", None),
             allowed_categories=list(config.allowed_categories),
             user_template=config.user_template,
+            status=getattr(config, "status", None),
+            source_file=(config.extra or {}).get("source_file"),
         )
 
     def get_prompt(

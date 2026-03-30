@@ -25,7 +25,7 @@
   <meta property="og:image" content="{{image0}}">
   <meta property="og:image:width" content="640">
   <meta property="og:image:height" content="853">
-  <meta property="og:image:secure_url" content="https://media.suvichaar.org/filters:resize/192x192/media/brandasset/suvichaariconblack.png">
+  <meta property="og:image:secure_url" content="{{sitelogo192x192}}">
   <meta property="article:published_time" content="{{publishedtime}}">
   <meta property="article:modified_time" content="{{modifiedtime}}">
   <meta name="twitter:card" content="summary_large_image">
@@ -48,10 +48,10 @@
   "author": {
     "@type": "Organization",
     "name": "Suvichaar",
-    "url": "https://suvichaar.org",
+    "url": "{{userprofileurl}}",
     "logo": {
       "@type": "ImageObject",
-      "url": "https://media.suvichaar.org/filters:resize/96x96/media/brandasset/suvichaariconblack.png",
+      "url": "{{sitelogo96x96}}",
       "width": 96,
       "height": 96
     }
@@ -59,10 +59,10 @@
   "publisher": {
     "@type": "Organization",
     "name": "Suvichaar",
-    "url": "https://suvichaar.org",
+    "url": "{{userprofileurl}}",
     "logo": {
       "@type": "ImageObject",
-      "url": "https://media.suvichaar.org/filters:resize/96x96/media/brandasset/suvichaariconblack.png",
+      "url": "{{sitelogo96x96}}",
       "width": 96,
       "height": 96
     }
@@ -76,7 +76,7 @@
   "isPartOf": {
     "@type": "WebSite",
     "name": "Suvichaar",
-    "url": "https://suvichaar.org"
+    "url": "{{userprofileurl}}"
   },
   "articleSection": "{{category}}",
   "genre": "News",
@@ -112,7 +112,7 @@
   <script async nomodule src="https://cdn.ampproject.org/v0/amp-video-0.1.js" crossorigin="anonymous" custom-element="amp-video"></script>
   
   <!-- Icons and Canonical -->
-  <link rel="alternate" type="application/rss+xml" title="Suvichaarlivestories" href="https://suvichaar.org/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="Suvichaarlivestories" href="{{userprofileurl}}/rss.xml">
   <link rel="icon" href="{{sitelogo32x32}}" sizes="32x32">
   <link rel="icon" href="{{sitelogo192x192}}" sizes="192x192">
   <link rel="apple-touch-icon" href="{{sitelogo180x180}}">
@@ -276,9 +276,9 @@
     <amp-story
     standalone
     title="SUVICHAAR LIVE"
-    publisher="Suvichaar"
-    publisher-logo-src="https://media.suvichaar.org/media/designasset/brandasset/icons/quaternary/whitequaternaryicon.png"
-    background-audio="https://buildsuvic-713ce1ab6f-endpoint.azureedge.net/blobbuildsuvic713ce1ab6f/wp-content/uploads/2025/05/2025-01-28_-_Todays_Headlines_-_www.FesliyanStudios.com-mp3cut.net-1.mp3"
+    publisher="{{publisher}}"
+    publisher-logo-src="{{publisherlogosrc}}"
+   
     poster-portrait-src="{{potraitcoverurl}}">
 
  
@@ -296,7 +296,7 @@
       
       <!-- BACKGROUND AUDIO -->
       <amp-story-grid-layer template="fill">
-        <amp-video autoplay loop layout="fixed" width="1" height="1" poster="" id="cover-audio">
+        <amp-video autoplay layout="fixed" width="1" height="1" poster="" id="cover-audio">
           <source type="audio/mpeg" src="{{storytitle_audiourl}}">
         </amp-video>
       </amp-story-grid-layer>
@@ -338,8 +338,8 @@
       
       <!-- BACKGROUND AUDIO -->
       <amp-story-grid-layer template="fill">
-        <amp-video autoplay loop layout="fixed" width="1" height="1" poster="" id="cta-audio">
-          <source type="audio/mpeg" src="https://cdn.suvichaar.org/media/audio/2ead449e31278f26fac0fcd7fe995947.mp3">
+        <amp-video autoplay layout="fixed" width="1" height="1" poster="" id="cta-audio">
+          <source type="audio/mpeg" src="{{storytitle_audiourl}}">
         </amp-video>
       </amp-story-grid-layer>
 
@@ -364,25 +364,25 @@
       </amp-story-grid-layer>
       
       <amp-story-page-outlink layout="nodisplay" theme="light">
-        <a href="https://suvichaar.org" rel="noreferrer" target="_blank">Visit</a>
+        <a href="{{userprofileurl}}" rel="noreferrer" target="_blank">Visit</a>
       </amp-story-page-outlink>
     </amp-story-page>
 
     <!-- Analytics -->
-    <amp-story-auto-analytics gtag-id="G-2D5GXVRK1E" class="i-amphtml-layout-container" i-amphtml-layout="container"></amp-story-auto-analytics>
+    <amp-story-auto-analytics gtag-id="{{analyticsid}}" class="i-amphtml-layout-container" i-amphtml-layout="container"></amp-story-auto-analytics>
     <amp-story-auto-ads class="i-amphtml-layout-container" i-amphtml-layout="container">
       <script type="application/json">
         {
           "ad-attributes": {
             "type": "adsense",
-            "data-ad-client": "ca-pub-7015967481587173",
-            "data-ad-slot": "2994708933"
+            "data-ad-client": "{{adsenseclientid}}",
+            "data-ad-slot": "{{adsenseslotid}}"
           }
         }
       </script>
     </amp-story-auto-ads>
     <amp-analytics type="gtag" data-credentials="include" class="i-amphtml-layout-fixed i-amphtml-layout-size-defined" style="width:1px;height:1px" i-amphtml-layout="fixed">
-      <script type="application/json">{"optoutElementId":"__gaOptOutExtension","vars":{"gtag_id":"G-2D5GXVRK1E","config":{"G-2D5GXVRK1E":{"groups":"default"},"linker":{"domains":["suvichaar.org"]}}},"triggers":{"storyProgress":{"on":"story-page-visible","request":"event","vars":{"event_name":"custom","event_action":"story_progress","event_category":"${title}","event_label":"${storyPageIndex}","event_value":"${storyProgress}","send_to":"G-2D5GXVRK1E"}},"storyEnd":{"on":"story-last-page-visible","request":"event","vars":{"event_name":"custom","event_action":"story_complete","event_category":"${title}","event_label":"${storyPageCount}","send_to":"G-2D5GXVRK1E"}},"trackFocusState":{"on":"story-focus","tagName":"a","request":"click ","vars":{"event_name":"custom","event_action":"story_focus","event_category":"${title}","send_to":"G-2D5GXVRK1E"}},"trackClickThrough":{"on":"story-click-through","tagName":"a","request":"click ","vars":{"event_name":"custom","event_action":"story_click_through","event_category":"${title}","send_to":"G-2D5GXVRK1E"}},"storyOpen":{"on":"story-open","request":"event","vars":{"event_name":"custom","event_action":"story_open","event_category":"${title}","send_to":"G-2D5GXVRK1E"}},"storyClose":{"on":"story-close","request":"event","vars":{"event_name":"custom","event_action":"story_close","event_category":"${title}","send_to":"G-2D5GXVRK1E"}},"audioMuted":{"on":"story-audio-muted","request":"event","vars":{"event_name":"custom","event_action":"story_audio_muted","event_category":"${title}","send_to":"G-2D5GXVRK1E"}},"audioUnmuted":{"on":"story-audio-unmuted","request":"event","vars":{"event_name":"custom","event_action":"story_audio_unmuted","event_category":"${title}","send_to":"G-2D5GXVRK1E"}},"pageAttachmentEnter":{"on":"story-page-attachment-enter","request":"event","vars":{"event_name":"custom","event_action":"story_page_attachment_enter","event_category":"${title}","send_to":"G-2D5GXVRK1E"}},"pageAttachmentExit":{"on":"story-page-attachment-exit","request":"event","vars":{"event_name":"custom","event_action":"story_page_attachment_exit","event_category":"${title}","send_to":"G-2D5GXVRK1E"}}}}</script>
+      <script type="application/json">{"optoutElementId":"__gaOptOutExtension","vars":{"gtag_id":"{{analyticsid}}","config":{"{{analyticsid}}":{"groups":"default"},"linker":{"domains":["{{organizationdomain}}"]}}},"triggers":{"storyProgress":{"on":"story-page-visible","request":"event","vars":{"event_name":"custom","event_action":"story_progress","event_category":"${title}","event_label":"${storyPageIndex}","event_value":"${storyProgress}","send_to":"{{analyticsid}}"}},"storyEnd":{"on":"story-last-page-visible","request":"event","vars":{"event_name":"custom","event_action":"story_complete","event_category":"${title}","event_label":"${storyPageCount}","send_to":"{{analyticsid}}"}},"trackFocusState":{"on":"story-focus","tagName":"a","request":"click ","vars":{"event_name":"custom","event_action":"story_focus","event_category":"${title}","send_to":"{{analyticsid}}"}},"trackClickThrough":{"on":"story-click-through","tagName":"a","request":"click ","vars":{"event_name":"custom","event_action":"story_click_through","event_category":"${title}","send_to":"{{analyticsid}}"}},"storyOpen":{"on":"story-open","request":"event","vars":{"event_name":"custom","event_action":"story_open","event_category":"${title}","send_to":"{{analyticsid}}"}},"storyClose":{"on":"story-close","request":"event","vars":{"event_name":"custom","event_action":"story_close","event_category":"${title}","send_to":"{{analyticsid}}"}},"audioMuted":{"on":"story-audio-muted","request":"event","vars":{"event_name":"custom","event_action":"story_audio_muted","event_category":"${title}","send_to":"{{analyticsid}}"}},"audioUnmuted":{"on":"story-audio-unmuted","request":"event","vars":{"event_name":"custom","event_action":"story_audio_unmuted","event_category":"${title}","send_to":"{{analyticsid}}"}},"pageAttachmentEnter":{"on":"story-page-attachment-enter","request":"event","vars":{"event_name":"custom","event_action":"story_page_attachment_enter","event_category":"${title}","send_to":"{{analyticsid}}"}},"pageAttachmentExit":{"on":"story-page-attachment-exit","request":"event","vars":{"event_name":"custom","event_action":"story_page_attachment_exit","event_category":"${title}","send_to":"{{analyticsid}}"}}}}</script>
     </amp-analytics>
     <amp-story-social-share layout="nodisplay" class="i-amphtml-layout-nodisplay" hidden="hidden" i-amphtml-layout="nodisplay">
       <script type="application/json">{"shareProviders":[{"provider":"twitter"},{"provider":"linkedin"},{"provider":"email"},{"provider":"system"}]}</script>

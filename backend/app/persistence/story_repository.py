@@ -31,6 +31,8 @@ class StoryORM(Base):
     image_assets: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     voice_assets: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     prompt_news: Mapped[str | None] = mapped_column(Text)
+    prompt_version: Mapped[str | None] = mapped_column(String(32))
+    prompt_file: Mapped[str | None] = mapped_column(String(255))
     canurl: Mapped[str | None] = mapped_column(Text)
     canurl1: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -102,6 +104,8 @@ class SqlAlchemyStoryRepository(StoryRepository):
             "image_assets": [asset.model_dump(mode="json") for asset in record.image_assets],
             "voice_assets": [asset.model_dump(mode="json") for asset in record.voice_assets],
             "prompt_news": record.prompt_news,
+            "prompt_version": record.prompt_version,
+            "prompt_file": record.prompt_file,
             "canurl": str(record.canurl) if record.canurl else None,
             "canurl1": str(record.canurl1) if record.canurl1 else None,
             "created_at": record.created_at,
@@ -120,6 +124,8 @@ class SqlAlchemyStoryRepository(StoryRepository):
             image_assets=[ImageAsset(**item) for item in orm.image_assets],
             voice_assets=[VoiceAsset(**item) for item in orm.voice_assets],
             prompt_news=orm.prompt_news,
+            prompt_version=orm.prompt_version,
+            prompt_file=orm.prompt_file,
             canurl=orm.canurl,
             canurl1=orm.canurl1,
             created_at=orm.created_at,

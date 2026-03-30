@@ -119,9 +119,12 @@ class PromptTemplateInfo(BaseModel):
     """Descriptor for a prompt template."""
 
     mode: str = Field(..., description="Mode identifier associated with the template.")
+    version: str = Field(..., description="Version identifier for the prompt definition.")
     description: Optional[str] = Field(default=None, description="Human-readable summary.")
     allowed_categories: List[str] = Field(default_factory=list, description="Allowed categories for the template.")
     user_template: str = Field(..., description="Raw user prompt template with placeholders.")
+    status: Optional[str] = Field(default=None, description="Lifecycle status such as active or deprecated.")
+    source_file: Optional[str] = Field(default=None, description="Prompt file backing this configuration.")
 
 
 class RenderedPrompt(BaseModel):
@@ -199,6 +202,8 @@ class StoryRecord(BaseModel):
     image_assets: List[ImageAsset] = Field(default_factory=list, description="List of all resolved image assets.")
     voice_assets: List[VoiceAsset] = Field(default_factory=list, description="Narration assets linked to the story.")
     prompt_news: Optional[str] = Field(default=None, description="Prompt text used when generating news content.")
+    prompt_version: Optional[str] = Field(default=None, description="Version of the prompt used to generate the story.")
+    prompt_file: Optional[str] = Field(default=None, description="Prompt definition file used to generate the story.")
     canurl: Optional[HttpUrl] = Field(default=None, description="Primary shareable URL.")
     canurl1: Optional[HttpUrl] = Field(default=None, description="Secondary shareable URL.")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp when the story was stored.")

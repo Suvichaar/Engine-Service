@@ -49,7 +49,7 @@ logger.info("Handlers: stdout, stderr")
 logger.info("=" * 60)
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Body, Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.api.schemas import StoryCreateRequest, StoryResponse
@@ -80,6 +80,7 @@ from app.services.model_clients import LanguageModel, NewsModelClient
 from app.services.orchestrator import StoryOrchestrator
 from app.services.prompt_templates import DefaultPromptTemplateService, PromptSelectionController
 from app.services.template_registry import list_template_definitions
+from app.services.template_slide_generators import configure_template_generators
 from app.services.user_input import DefaultUserInputService
 from app.services.voice_synthesis import (
     AzureTTSClient,
@@ -181,17 +182,11 @@ def get_orchestrator() -> StoryOrchestrator:
     settings = get_settings()
     logger = logging.getLogger(__name__)
 
-    # --- Voice provider configuration ---------------------------------------
-    # For now, hard-wire ElevenLabs from known working credentials so that
-    # voice synthesis definitely uses it, independent of env override quirks.
-    ELEVENLABS_API_KEY = "sk_18ec75c00f3a3141f2766e4353ec918015cbb9ffbe79b439"
-    ELEVENLABS_VOICE_ID = "yD0Zg2jxgfQLY8I2MEHO"
-
     # Debug: log loaded voice settings (warn level so they appear by default)
     logger.warning(
         "Voice config - elevenlabs: api_key_set=%s voice_id_set=%s",
-        bool(ELEVENLABS_API_KEY),
-        bool(ELEVENLABS_VOICE_ID),
+        bool(settings.elevenlabs and not is_placeholder_value(settings.elevenlabs.api_key)),
+        bool(settings.elevenlabs and not is_placeholder_value(settings.elevenlabs.voice_id)),
     )
     logger.warning("Voice config - azure_voice: %s", settings.azure_voice)
 
@@ -256,10 +251,14 @@ def get_orchestrator() -> StoryOrchestrator:
     voice_providers = []
     default_voice_provider = None
 
-    # ElevenLabs provider: use hard-coded credentials for now
-    if ELEVENLABS_API_KEY:
+    if settings.elevenlabs and not (
+        is_placeholder_value(settings.elevenlabs.api_key) or is_placeholder_value(settings.elevenlabs.voice_id)
+    ):
         voice_providers.append(
-            ElevenLabsClient(api_key=ELEVENLABS_API_KEY, voice_id=ELEVENLABS_VOICE_ID)
+            ElevenLabsClient(
+                api_key=settings.elevenlabs.api_key,
+                voice_id=settings.elevenlabs.voice_id,
+            )
         )
         default_voice_provider = "elevenlabs_pro"
     if settings.azure_voice and not is_placeholder_value(settings.azure_voice.speech_key):
@@ -294,7 +293,11 @@ def get_orchestrator() -> StoryOrchestrator:
         aws_secret_key=settings.aws.secret_key,
         aws_region=settings.aws.region,
     )
-    voice_service = DefaultVoiceSynthesisService(voice_providers, voice_storage)
+    voice_service = DefaultVoiceSynthesisService(
+        voice_providers,
+        voice_storage,
+        placeholder_audio_url=settings.branding.placeholder_audio_url,
+    )
 
     # Use database repository only if database is available, otherwise use no-op repository
     from app.persistence.noop_repository import NoOpStoryRepository
@@ -310,11 +313,23 @@ def get_orchestrator() -> StoryOrchestrator:
     else:
         repository = NoOpStoryRepository()
 
+    configure_template_generators(default_background_image=settings.branding.default_bg_image)
+
     # HTML Template Renderer (pass language_model for SEO metadata generation)
     html_renderer = HTMLTemplateRenderer(
         template_base_path=Path("app/templates"),
         cdn_prefix_media=settings.aws.cdn_prefix_media,
         aws_bucket=settings.aws.bucket,
+        default_bg_image=settings.branding.default_bg_image,
+        default_cover_image=settings.branding.default_cover_image,
+        organization=settings.branding.organization,
+        publisher_logo_src=settings.branding.publisher_logo_src,
+        user_name=settings.branding.user_name,
+        user_profile_url=settings.branding.user_profile_url,
+        site_logo_base=settings.branding.site_logo_base,
+        analytics_id=settings.analytics.google_analytics_id,
+        adsense_client_id=settings.analytics.adsense_client_id,
+        adsense_slot_id=settings.analytics.adsense_slot_id,
         language_model=language_model,  # Pass language model for LLM-based SEO generation
     )
 
@@ -331,7 +346,7 @@ def get_orchestrator() -> StoryOrchestrator:
         repository=repository,
         html_renderer=html_renderer,
         default_voice_provider=default_voice_provider or "azure_basic",
-        story_base_url=settings.aws.cdn_html_base,
+        story_base_url=settings.story.base_url,
         save_to_database=session_factory is not None,  # Enable database saving if database is available
     )
 
@@ -454,7 +469,63 @@ def _load_from_azure_blob(blob_url: str, logger: logging.Logger) -> Optional[byt
 
 
 @app.post("/stories", response_model=StoryResponse)
-def create_story(request: StoryCreateRequest, orchestrator: StoryOrchestrator = Depends(get_orchestrator)):
+def create_story(
+    request: StoryCreateRequest = Body(
+        ...,
+        openapi_examples={
+            "ai_example": {
+                "summary": "AI Image Example",
+                "description": "Generate a story from a Suvichaar story URL and let the backend generate AI images.",
+                "value": {
+                    "mode": "news",
+                    "template_key": "test-news-1",
+                    "slide_count": 4,
+                    "user_input": "https://suvichaar.org/stories/trump-said-prefer-taking-oil-from-iran-possibility-of-seizing-kharg-island_300326094600956",
+                    "notes": "make it in english",
+                    "category": "News",
+                    "image_source": "ai",
+                    "voice_engine": "elevenlabs_pro",
+                    "prompt_keywords": ["I want a good images"],
+                },
+            },
+            "pexels_example": {
+                "summary": "Pexels Image Example",
+                "description": "Generate a story from the Indian Express cricket article and source images from Pexels.",
+                "value": {
+                    "mode": "news",
+                    "template_key": "test-news-1",
+                    "slide_count": 4,
+                    "user_input": "https://indianexpress.com/article/sports/cricket/ipl-cameron-green-bowling-cricket-australia-ajinkya-rahane-kkr-10608515/?ref=rhs_mar_30_latest_news_world",
+                    "notes": "I want it in english",
+                    "category": "News",
+                    "image_source": "pexels",
+                    "voice_engine": "elevenlabs_pro",
+                    "prompt_keywords": ["news", "breaking"],
+                },
+            },
+            "custom_s3_images_example": {
+                "summary": "Custom S3 Images Example",
+                "description": "Generate a story using pre-uploaded custom background images stored in S3.",
+                "value": {
+                    "mode": "news",
+                    "template_key": "test-news-1",
+                    "slide_count": 4,
+                    "user_input": "https://indianexpress.com/article/sports/cricket/ipl-cameron-green-bowling-cricket-australia-ajinkya-rahane-kkr-10608515/?ref=rhs_mar_30_latest_news_world",
+                    "notes": "I want it english",
+                    "category": "News",
+                    "image_source": "custom",
+                    "voice_engine": "elevenlabs_pro",
+                    "attachments": [
+                        "s3://suvichaarapp/media/images/backgrounds/20260330/51d7eccb-2ce3-4de5-90af-ea7caba6f31f.JPG",
+                        "s3://suvichaarapp/media/images/backgrounds/20260330/aca7c320-4a47-43c2-bb20-cecbc556e4bd.png",
+                        "s3://suvichaarapp/media/images/backgrounds/20260330/dcc7adbd-1377-4776-85b4-18cfad7243ed.png",
+                    ],
+                },
+            },
+        },
+    ),
+    orchestrator: StoryOrchestrator = Depends(get_orchestrator),
+):
     logger = logging.getLogger(__name__)
     if request.mode != Mode.NEWS:
         raise HTTPException(status_code=400, detail="Only news mode is supported by this backend.")

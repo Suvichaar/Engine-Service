@@ -13,6 +13,8 @@ def test_list_templates_returns_modes():
 
     assert "news" in templates
     assert "{analysis}" in templates["news"].user_template
+    assert templates["news"].version == "v1"
+    assert templates["news"].source_file == "news.v1.prompt"
 
 
 def test_get_prompt_renders_user_content():
@@ -29,6 +31,7 @@ def test_get_prompt_renders_user_content():
     assert "Headline summary here." in prompt.user
     assert "economy" in prompt.user
     assert prompt.metadata["mode"] == "news"
+    assert prompt.metadata["prompt_version"] == "v1"
 
 
 def test_prompt_selection_controller_composes_analysis_text():

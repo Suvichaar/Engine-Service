@@ -64,9 +64,9 @@
   <body>
     <amp-story standalone
       title="Notes Chapter Story"
-      publisher="Suvichaar"
-      publisher-logo-src="https://example.com/logo.png"
-      poster-portrait-src="https://example.com/poster.jpg">
+      publisher="{{publisher}}"
+      publisher-logo-src="{{publisherlogosrc}}"
+      poster-portrait-src="{{potraitcoverurl}}">
             <!-- 🔷 COVER SLIDE (Slide 1)-->
       <amp-story-page id="cover-slide" auto-advance-after="cover-audio">
         <amp-story-grid-layer template="fill">
@@ -75,7 +75,7 @@
           </amp-img>
         </amp-story-grid-layer>
         <amp-story-grid-layer template="fill">
-          <amp-video autoplay loop layout="fixed" width="1" height="1" poster="" id="cover-audio">
+          <amp-video autoplay layout="fixed" width="1" height="1" poster="" id="cover-audio">
             <source type="audio/mpeg" src="{{s1audio1}}">
           </amp-video>
         </amp-story-grid-layer>
@@ -97,7 +97,7 @@
           </amp-img>
         </amp-story-grid-layer>
         <amp-story-grid-layer template="fill">
-          <amp-video autoplay loop layout="fixed" width="1" height="1" poster="" id="cover-audio">
+          <amp-video autoplay layout="fixed" width="1" height="1" poster="" id="cover-audio">
             <source type="audio/mpeg" src="{{s2audio1}}">
           </amp-video>
         </amp-story-grid-layer>
@@ -119,7 +119,7 @@
           </amp-img>
         </amp-story-grid-layer>
         <amp-story-grid-layer template="fill">
-          <amp-video autoplay loop layout="fixed" width="1" height="1" poster="" id="cover-audio">
+          <amp-video autoplay layout="fixed" width="1" height="1" poster="" id="cover-audio">
             <source type="audio/mpeg" src="{{s3audio1}}">
           </amp-video>
         </amp-story-grid-layer>
@@ -141,7 +141,7 @@
           </amp-img>
         </amp-story-grid-layer>
         <amp-story-grid-layer template="fill">
-          <amp-video autoplay loop layout="fixed" width="1" height="1" poster="" id="cover-audio">
+          <amp-video autoplay layout="fixed" width="1" height="1" poster="" id="cover-audio">
             <source type="audio/mpeg" src="{{s4audio1}}">
           </amp-video>
         </amp-story-grid-layer>
@@ -163,7 +163,7 @@
           </amp-img>
         </amp-story-grid-layer>
         <amp-story-grid-layer template="fill">
-          <amp-video autoplay loop layout="fixed" width="1" height="1" poster="" id="cover-audio">
+          <amp-video autoplay layout="fixed" width="1" height="1" poster="" id="cover-audio">
             <source type="audio/mpeg" src="{{s5audio1}}">
           </amp-video>
         </amp-story-grid-layer>
@@ -185,7 +185,7 @@
           </amp-img>
         </amp-story-grid-layer>
         <amp-story-grid-layer template="fill">
-          <amp-video autoplay loop layout="fixed" width="1" height="1" poster="" id="cover-audio">
+          <amp-video autoplay layout="fixed" width="1" height="1" poster="" id="cover-audio">
             <source type="audio/mpeg" src="{{s6audio1}}">
           </amp-video>
         </amp-story-grid-layer>
@@ -207,8 +207,8 @@
           </amp-img>
         </amp-story-grid-layer>
         <amp-story-grid-layer template="fill">
-          <amp-video autoplay loop layout="fixed" width="1" height="1" poster="" id="cover-audio">
-            <source type="audio/mpeg" src="https://buildsuvic-713ce1ab6f-endpoint.azureedge.net/blobbuildsuvic713ce1ab6f/wp-content/uploads/2025/05/2018-11-23_-_Trusted_News_v2_-_David_Fesliyan-mp3cut.net_.mp3">
+          <amp-video autoplay layout="fixed" width="1" height="1" poster="" id="cover-audio">
+            <source type="audio/mpeg" src="{{storytitle_audiourl}}">
           </amp-video>
         </amp-story-grid-layer>
         <amp-story-grid-layer template="vertical">
@@ -220,7 +220,7 @@
            <div class="footer"><p>&copy;ABC Classes</p></div>
           </div>
         </amp-story-grid-layer>
-    <amp-story-page-outlink layout="nodisplay" theme="light" ><a href="https://cdn.suvichaar.org/nextlink" rel="noreferrer" target="_blank">Read Next</a></amp-story-page-outlink>
+    <amp-story-page-outlink layout="nodisplay" theme="light" ><a href="{{userprofileurl}}" rel="noreferrer" target="_blank">Read Next</a></amp-story-page-outlink>
  
       </amp-story-page>
 

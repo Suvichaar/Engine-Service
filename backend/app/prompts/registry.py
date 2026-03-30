@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Mapping
+from typing import Iterable, Mapping
 
 from .base import PromptTemplate
-from .news import NEWS_TEMPLATE
-
-
-PROMPT_REGISTRY: Dict[str, PromptTemplate] = {
-    "news": NEWS_TEMPLATE,
-}
+from .loader import load_prompt_registry
 
 
 class PromptNotFoundError(KeyError):
@@ -24,14 +19,14 @@ class InvalidCategoryError(ValueError):
 def available_modes() -> Iterable[str]:
     """Return the set of registered prompt modes."""
 
-    return PROMPT_REGISTRY.keys()
+    return load_prompt_registry().keys()
 
 
 def get_prompt_config(mode: str) -> PromptTemplate:
     """Return the underlying prompt template for the specified mode."""
 
     try:
-        return PROMPT_REGISTRY[mode]
+        return load_prompt_registry()[mode]
     except KeyError as exc:
         raise PromptNotFoundError(f"No prompt registered for mode '{mode}'.") from exc
 
@@ -68,5 +63,8 @@ def render_prompt(
             "mode": mode,
             "category": category,
             "language": language,
+            "prompt_version": prompt_template.version,
+            "prompt_file": prompt_template.extra.get("source_file") if prompt_template.extra else None,
+            "prompt_status": prompt_template.status,
         },
     }

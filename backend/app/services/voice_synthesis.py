@@ -46,9 +46,15 @@ class VoiceStorageService(Protocol):
 class DefaultVoiceSynthesisService(VoiceSynthesisService):
     """Coordinate voice providers and storage to produce voice assets."""
 
-    def __init__(self, providers: Sequence[VoiceProvider], storage: VoiceStorageService) -> None:
+    def __init__(
+        self,
+        providers: Sequence[VoiceProvider],
+        storage: VoiceStorageService,
+        placeholder_audio_url: str = "https://media.example.org/placeholder-audio.mp3",
+    ) -> None:
         self._providers = list(providers)
         self._storage = storage
+        self._placeholder_audio_url = placeholder_audio_url
 
     def synthesize(self, deck: SlideDeck, language: LanguageMetadata, provider: str) -> list[VoiceAsset]:
         logger = logging.getLogger(__name__)
@@ -80,13 +86,10 @@ class DefaultVoiceSynthesisService(VoiceSynthesisService):
                 logger.warning("Failed to generate audio for slide %d: %s", idx + 1, e)
                 # Create a placeholder asset to maintain index alignment
                 # This ensures voice_assets[0] = slide 0, voice_assets[1] = slide 1, etc.
-                from app.domain.dto import VoiceAsset
-                from pydantic import HttpUrl
-                placeholder_url = HttpUrl("https://media.suvichaar.org/placeholder-audio.mp3")
                 placeholder_asset = VoiceAsset(
                     provider=voice_provider.name,
                     voice_id=None,
-                    audio_url=placeholder_url,
+                    audio_url=self._placeholder_audio_url,
                     duration_seconds=None,
                 )
                 assets.append(placeholder_asset)
@@ -282,4 +285,3 @@ __all__ = [
     "VoiceStorageService",
     "VoiceGenerationResult",
 ]
-

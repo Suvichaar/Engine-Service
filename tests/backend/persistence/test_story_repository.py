@@ -55,6 +55,8 @@ def make_story_record() -> StoryRecord:
             )
         ],
         prompt_news="news prompt",
+        prompt_version="v1",
+        prompt_file="news.v1.prompt",
         canurl="https://story/primary",
         canurl1="https://story/secondary",
         created_at=datetime.utcnow(),
@@ -77,8 +79,10 @@ def test_story_repository_save_and_get():
 
     assert fetched.id == record.id
     assert fetched.category == "News"
-    assert fetched.slide_deck.template_key == "test-news-1"
+    assert fetched.slide_deck.template_key == "modern"
     assert fetched.image_assets[0].source == "ai"
+    assert fetched.prompt_version == "v1"
+    assert fetched.prompt_file == "news.v1.prompt"
 
 
 def test_story_repository_updates_existing_record():

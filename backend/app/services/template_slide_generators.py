@@ -6,6 +6,14 @@ from typing import Optional, Protocol
 
 from app.services.template_registry import get_template_definition
 
+
+DEFAULT_BACKGROUND_IMAGE = "https://media.example.org/default-bg.png"
+
+
+def configure_template_generators(*, default_background_image: str) -> None:
+    global DEFAULT_BACKGROUND_IMAGE
+    DEFAULT_BACKGROUND_IMAGE = default_background_image
+
 class TemplateSlideGenerator(Protocol):
     """Interface for template-specific slide generators."""
 
@@ -33,7 +41,7 @@ class TestNews1SlideGenerator:
         """Generate AMP slide for test-news-1 template."""
         # Default background image if none provided
         if not background_image_url:
-            background_image_url = "https://media.suvichaar.org/upload/polaris/polarisslide.png"
+            background_image_url = DEFAULT_BACKGROUND_IMAGE
 
         # Escape HTML in paragraph
         paragraph_escaped = paragraph.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -46,7 +54,7 @@ class TestNews1SlideGenerator:
           </amp-img>
         </amp-story-grid-layer>
         <amp-story-grid-layer template="fill">
-          <amp-video autoplay loop layout="fixed" width="1" height="1" poster="" id="{slide_id}-audio">
+          <amp-video autoplay layout="fixed" width="1" height="1" poster="" id="{slide_id}-audio">
             <source type="audio/mpeg" src="{audio_url}">
           </amp-video>
         </amp-story-grid-layer>
@@ -77,7 +85,7 @@ class TestNews2SlideGenerator:
         # For now, use same structure as test-news-1
         # TODO: Update with test-news-2 specific structure later
         if not background_image_url:
-            background_image_url = "https://media.suvichaar.org/upload/polaris/polarisslide.png"
+            background_image_url = DEFAULT_BACKGROUND_IMAGE
 
         # Escape HTML in paragraph
         paragraph_escaped = paragraph.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -90,7 +98,7 @@ class TestNews2SlideGenerator:
           </amp-img>
         </amp-story-grid-layer>
         <amp-story-grid-layer template="fill">
-          <amp-video autoplay loop layout="fixed" width="1" height="1" poster="" id="{slide_id}-audio">
+          <amp-video autoplay layout="fixed" width="1" height="1" poster="" id="{slide_id}-audio">
             <source type="audio/mpeg" src="{audio_url}">
           </amp-video>
         </amp-story-grid-layer>
@@ -119,7 +127,7 @@ class TestNews3SlideGenerator:
         """Generate AMP slide for test-news-3 template (breaking news style)."""
         # Default background image if none provided
         if not background_image_url:
-            background_image_url = "https://media.suvichaar.org/upload/polaris/polarisslide.png"
+            background_image_url = DEFAULT_BACKGROUND_IMAGE
 
         # Escape HTML in paragraph
         paragraph_escaped = paragraph.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -138,7 +146,7 @@ class TestNews3SlideGenerator:
         
         <!-- BACKGROUND AUDIO -->
         <amp-story-grid-layer template="fill">
-          <amp-video autoplay loop layout="fixed" width="1" height="1" poster="" id="{slide_id}-audio">
+          <amp-video autoplay layout="fixed" width="1" height="1" poster="" id="{slide_id}-audio">
             <source type="audio/mpeg" src="{audio_url}">
           </amp-video>
         </amp-story-grid-layer>
