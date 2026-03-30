@@ -6,4 +6,5 @@ __pycache__/
 stories.db
 .env
 backend/.env
+backend/output/
 backend/app/core/settings.local.toml
