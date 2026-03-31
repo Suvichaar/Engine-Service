@@ -1480,24 +1480,6 @@ class UserUploadProvider:
             return None
 
 
-class NewsDefaultImageProvider:
-    """Default image provider for News mode when no image_source is specified."""
-
-    source = "news_default"
-
-    def supports(self, payload: IntakePayload) -> bool:
-        """Only for NEWS mode when image_source is None/not provided."""
-        from app.domain.dto import Mode
-
-        return payload.mode == Mode.NEWS and payload.image_source is None
-
-    def generate(self, deck: SlideDeck, payload: IntakePayload) -> Sequence[ImageContent]:
-        """Return empty list - default images will be handled in HTML renderer."""
-        # For News mode with no image_source, we use default URLs directly in HTML renderer
-        # No actual image generation/upload needed
-        return []
-
-
 class ArticleImageProvider:
     """Provider that uses images extracted from article URLs."""
 

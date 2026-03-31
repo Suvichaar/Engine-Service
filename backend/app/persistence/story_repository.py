@@ -30,7 +30,6 @@ class StoryORM(Base):
     slide_deck: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
     image_assets: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     voice_assets: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
-    prompt_news: Mapped[str | None] = mapped_column(Text)
     prompt_curious: Mapped[str | None] = mapped_column(Text)
     canurl: Mapped[str | None] = mapped_column(Text)
     canurl1: Mapped[str | None] = mapped_column(Text)
@@ -102,7 +101,6 @@ class SqlAlchemyStoryRepository(StoryRepository):
             "slide_deck": record.slide_deck.model_dump(mode="json"),
             "image_assets": [asset.model_dump(mode="json") for asset in record.image_assets],
             "voice_assets": [asset.model_dump(mode="json") for asset in record.voice_assets],
-            "prompt_news": record.prompt_news,
             "prompt_curious": record.prompt_curious,
             "canurl": str(record.canurl) if record.canurl else None,
             "canurl1": str(record.canurl1) if record.canurl1 else None,
@@ -121,7 +119,6 @@ class SqlAlchemyStoryRepository(StoryRepository):
             slide_deck=SlideDeck(**orm.slide_deck),
             image_assets=[ImageAsset(**item) for item in orm.image_assets],
             voice_assets=[VoiceAsset(**item) for item in orm.voice_assets],
-            prompt_news=orm.prompt_news,
             prompt_curious=orm.prompt_curious,
             canurl=orm.canurl,
             canurl1=orm.canurl1,

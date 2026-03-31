@@ -75,7 +75,7 @@ from app.services.language_detection import (
     LanguageDetectionStrategy,
 )
 from app.services.azure_openai_client import AzureOpenAILanguageModel
-from app.services.model_clients import CuriousModelClient, LanguageModel, NewsModelClient
+from app.services.model_clients import CuriousModelClient, LanguageModel
 from app.services.model_router import DefaultModelRouter
 from app.services.orchestrator import StoryOrchestrator
 from app.services.prompt_templates import DefaultPromptTemplateService, PromptSelectionController
@@ -203,8 +203,7 @@ def get_orchestrator() -> StoryOrchestrator:
     else:
         language_model = EchoLanguageModel()
     curious_client = CuriousModelClient(language_model=language_model)
-    news_client = NewsModelClient(language_model=language_model)
-    model_router = DefaultModelRouter({Mode.CURIOUS: curious_client, Mode.NEWS: news_client})
+    model_router = DefaultModelRouter({Mode.CURIOUS: curious_client})
 
     image_providers = []
     if settings.ai_image and not (
@@ -226,9 +225,6 @@ def get_orchestrator() -> StoryOrchestrator:
     else:
         logger.warning("❌ PexelsImageProvider not initialized - missing pexels configuration")
     image_providers.append(UserUploadProvider())
-    # Add NewsDefaultImageProvider for News mode when no image_source is specified
-    from app.services.image_pipeline import NewsDefaultImageProvider
-    image_providers.append(NewsDefaultImageProvider())
     logger.warning(
         "📷 Registered image providers: %s",
         [getattr(p, 'source', type(p).__name__) for p in image_providers],
@@ -487,8 +483,13 @@ def create_story(request: StoryCreateRequest, orchestrator: StoryOrchestrator = 
     return StoryResponse.model_validate(record.model_dump())
 
 
+from fastapi import Depends, FastAPI, HTTPException
+
 @app.get("/stories/{story_id}", response_model=StoryResponse)
-def get_story(story_id: str, orchestrator: StoryOrchestrator = Depends(get_orchestrator)):
+def get_story(
+    story_id: str, 
+    orchestrator: StoryOrchestrator = Depends(get_orchestrator)
+):
     """
     Get story by UUID or slug.
     If story_id looks like a UUID, use UUID lookup.
@@ -522,7 +523,10 @@ def healthcheck():
 
 
 @app.get("/stories/{story_id}/html")
-def get_story_html(story_id: str, orchestrator: StoryOrchestrator = Depends(get_orchestrator)):
+def get_story_html(
+    story_id: str, 
+    orchestrator: StoryOrchestrator = Depends(get_orchestrator)
+):
     """Get rendered HTML for a story."""
     import logging
     logger = logging.getLogger(__name__)
@@ -556,7 +560,10 @@ def get_story_html(story_id: str, orchestrator: StoryOrchestrator = Depends(get_
 
 
 @app.get("/stories/{story_id}/test")
-def test_story_generation(story_id: str, orchestrator: StoryOrchestrator = Depends(get_orchestrator)):
+def test_story_generation(
+    story_id: str, 
+    orchestrator: StoryOrchestrator = Depends(get_orchestrator)
+):
     """Test endpoint to verify story generation and components."""
     try:
         record = orchestrator.get_story(story_id)

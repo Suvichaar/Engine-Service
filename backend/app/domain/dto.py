@@ -15,7 +15,6 @@ SlideCount = conint(strict=True, ge=4, le=10)
 
 class Mode(str, Enum):
     CURIOUS = "curious"
-    NEWS = "news"
 
 
 class IntakePayload(BaseModel):
@@ -199,7 +198,6 @@ class StoryRecord(BaseModel):
     slide_deck: SlideDeck = Field(..., description="Final slide deck representation.")
     image_assets: List[ImageAsset] = Field(default_factory=list, description="List of all resolved image assets.")
     voice_assets: List[VoiceAsset] = Field(default_factory=list, description="Narration assets linked to the story.")
-    prompt_news: Optional[str] = Field(default=None, description="Prompt text used when generating news content.")
     prompt_curious: Optional[str] = Field(default=None, description="Prompt text used when generating curious content.")
     canurl: Optional[HttpUrl] = Field(default=None, description="Primary shareable URL.")
     canurl1: Optional[HttpUrl] = Field(default=None, description="Secondary shareable URL.")
@@ -219,11 +217,4 @@ class CuriousNarrative(NarrativeResponse):
 
     explainability_notes: List[str] = Field(default_factory=list, description="Explainability notes per slide or section.")
     reasoning_trace: Optional[str] = Field(default=None, description="Optional reasoning trace provided by the LLM.")
-
-
-class NewsNarrative(NarrativeResponse):
-    """Narrative response tailored for the News mode."""
-
-    headlines: List[str] = Field(default_factory=list, description="Headline statements extracted from the output.")
-    bullet_points: List[str] = Field(default_factory=list, description="Concise bullet points for the news story.")
 

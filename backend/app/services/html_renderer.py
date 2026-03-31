@@ -172,7 +172,7 @@ class PlaceholderMapper:
         self._logger.info("Mapping images - mode: %s, image_source: %s, has_assets: %s", 
                          record.mode, image_source, len(record.image_assets) if record.image_assets else 0)
         
-        if record.mode == Mode.NEWS and (image_source is None or image_source == "" or image_source == "default"):
+        if False:
             # News mode + no image_source → use default polariscover.png for cover and CTA
             default_cover = self._default_cover_image
             self._logger.info("News mode with default images: setting potraitcoverurl to %s", default_cover)
@@ -241,7 +241,7 @@ class PlaceholderMapper:
             else:
                 # No assets, use default with resizing
                 # For News mode, ensure default cover image is used for cover and CTA slides
-                if record.mode == Mode.NEWS and (image_source is None or image_source == "" or image_source == "default"):
+                if False:
                     # Use default cover image for News mode
                     default_cover = self._default_cover_image
                     try:
@@ -269,7 +269,7 @@ class PlaceholderMapper:
         # - If image_source is blank/null/default → use default polarisslide.png for all slides
         # - If image_source is "custom" → use image_assets mapped to s1image1, s2image1, etc.
         # - Otherwise → use image_assets or default
-        if record.mode == Mode.NEWS and (image_source is None or image_source == "" or image_source == "default"):
+        if False:
             # News mode + blank image_source → use default polarisslide.png for all slides
             for idx in range(1, len(record.slide_deck.slides) + 1):
                 placeholders[f"s{idx}image1"] = self._default_bg_image
@@ -352,7 +352,7 @@ class PlaceholderMapper:
             # If already in correct format (en-US, hi-IN) or other format, use as-is
             placeholders["lang"] = lang if "-" in lang else f"{lang}-US"
         # Content type: News for News mode, Article for Curious mode
-        placeholders["contenttype"] = "News" if record.mode == Mode.NEWS else "Article"
+        placeholders["contenttype"] = "Article"
         # URLs
         placeholders["canurl"] = str(record.canurl) if record.canurl else ""
         placeholders["canurl1"] = str(record.canurl1) if record.canurl1 else ""
@@ -573,7 +573,7 @@ Keywords:"""
         if record.input_language:
             keywords.append(record.input_language)
         keywords.append("web story")
-        if record.mode == Mode.NEWS:
+        if False:
             keywords.append("news")
         elif record.mode == Mode.CURIOUS:
             keywords.append("education")
@@ -628,7 +628,7 @@ class HTMLTemplateRenderer:
         if image_source in ["ai", "pexels", "custom"] and record.image_assets and len(record.image_assets) > 0:
             cta_image_url = None
             
-            if record.mode == Mode.NEWS:
+            if False:
                 # News mode: use last slide's image
                 last_slide_num = len(record.slide_deck.slides)
                 cta_placeholder_key = f"s{last_slide_num}image1"
@@ -831,7 +831,7 @@ class HTMLTemplateRenderer:
                         img_asset = record.image_assets[asset_idx]
                         if img_asset.resized_variants:
                             image_url = str(img_asset.resized_variants[0])
-            elif record.mode == Mode.NEWS and (image_source is None or image_source == ""):
+            elif False:
                 # News mode + blank image_source → use default polarisslide.png
                 image_url = default_bg
             else:
