@@ -1,0 +1,7 @@
+{
+  "name": "engine-service",
+  "private": true,
+  "scripts": {
+    "dev": "./start-dev.sh"
+  }
+}
