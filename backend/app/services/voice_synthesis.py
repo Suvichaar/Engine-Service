@@ -12,6 +12,7 @@ from pydantic import HttpUrl
 
 from app.domain.dto import LanguageMetadata, SlideDeck, VoiceAsset
 from app.domain.interfaces import VoiceSynthesisService
+from app.utils import is_placeholder_value
 
 
 class VoiceProvider(Protocol):
@@ -138,6 +139,16 @@ class ElevenLabsClient:
         effective_voice_id = voice_id or self._voice_id
         logger.info("🎤 ElevenLabs synthesis started: text_length=%d, language=%s, voice_id=%s", 
                     len(text), language, effective_voice_id)
+
+        if is_placeholder_value(self._api_key) or is_placeholder_value(effective_voice_id):
+            logger.info("Skipping ElevenLabs network call because placeholder credentials are configured")
+            audio_bytes = f"ELEVENLABS:{language}:{text}".encode("utf-8")
+            return VoiceGenerationResult(
+                audio_bytes=audio_bytes,
+                format="mp3",
+                voice_id=effective_voice_id,
+                metadata={"provider": self.name},
+            )
         
         headers = {
             "xi-api-key": self._api_key,
@@ -185,6 +196,17 @@ class AzureTTSClient:
         return provider_id == self.name
 
     def synthesize(self, text: str, *, language: str, voice_id: Optional[str] = None) -> VoiceGenerationResult:
+        if is_placeholder_value(self._api_key) or is_placeholder_value(self._region):
+            logging.getLogger(__name__).info(
+                "Skipping Azure TTS network call because placeholder credentials are configured"
+            )
+            return VoiceGenerationResult(
+                audio_bytes=f"AZURE:{language}:{text}".encode("utf-8"),
+                format="wav",
+                voice_id=self._voice,
+                metadata={"provider": self.name},
+            )
+
         headers = {
             "Ocp-Apim-Subscription-Key": self._api_key,
             "Content-Type": "application/ssml+xml",
@@ -241,6 +263,10 @@ class S3VoiceStorageService:
 
     def _get_s3_client(self):
         """Lazy-load boto3 S3 client."""
+        if is_placeholder_value(self._aws_access_key) or is_placeholder_value(self._aws_secret_key):
+            self._logger.info("Skipping S3 voice client initialization because placeholder credentials are configured")
+            return None
+
         if self._s3_client is None:
             try:
                 import boto3

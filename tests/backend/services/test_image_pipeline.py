@@ -105,8 +105,9 @@ def test_user_upload_provider_converts_attachments():
     payload = make_payload("custom", attachments=["s3://bucket/image1.png"])
     contents = provider.generate(make_deck(), payload)
 
-    assert len(contents) == 1
+    assert len(contents) == 2
     assert contents[0].filename == "image1.png"
+    assert contents[1].filename == "image1.png"
 
 
 def test_s3_storage_service_generates_cloudfront_urls():

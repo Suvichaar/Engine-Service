@@ -42,6 +42,7 @@ from app.domain.interfaces import (
 from app.services.prompt_templates import PromptSelectionController
 from app.services.html_renderer import HTMLTemplateRenderer
 from app.api.schemas import StoryCreateRequest
+from app.utils import is_placeholder_value
 
 
 @dataclass
@@ -461,6 +462,14 @@ class StoryOrchestrator:
                             from app.core import get_settings
                             settings = get_settings()
                             html_bucket = settings.story.html_bucket or settings.aws.bucket
+
+                            if (
+                                is_placeholder_value(settings.aws.access_key)
+                                or is_placeholder_value(settings.aws.secret_key)
+                                or is_placeholder_value(html_bucket)
+                            ):
+                                logger.info("Skipping HTML S3 upload because placeholder storage configuration is configured")
+                                raise ValueError("Placeholder S3 configuration")
                             
                             # Upload rendered HTML using configured slug-based filename
                             import boto3

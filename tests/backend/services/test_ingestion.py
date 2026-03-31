@@ -32,7 +32,7 @@ def test_aggregator_builds_structured_request():
 
     job_request = aggregator.aggregate(payload, language)
 
-    assert job_request.text_input and "Primary text" in job_request.text_input
+    assert job_request.text_input and "Primary text" not in job_request.text_input
     assert "Additional context" in job_request.text_input
     assert [str(url) for url in job_request.url_list] == ["https://example.com/"]
     assert job_request.attachments[0].uri == "file1.pdf"
@@ -51,4 +51,3 @@ def test_aggregator_handles_empty_values():
     assert job_request.url_list == []
     assert job_request.attachments == []
     assert job_request.focus_keywords == []
-

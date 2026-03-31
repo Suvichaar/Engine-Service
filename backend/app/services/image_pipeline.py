@@ -14,6 +14,7 @@ import httpx
 
 from app.domain.dto import ImageAsset, IntakePayload, SlideDeck
 from app.domain.interfaces import ImageAssetPipeline
+from app.utils import is_placeholder_value
 from app.services.image_prompts import (
     extract_positive_keywords,
     generate_content_related_safe_prompt,
@@ -1467,6 +1468,10 @@ class S3ImageStorageService:
 
     def _get_s3_client(self):
         """Lazy-load boto3 S3 client."""
+        if is_placeholder_value(self._aws_access_key) or is_placeholder_value(self._aws_secret_key):
+            self._logger.info("Skipping S3 image client initialization because placeholder credentials are configured")
+            return None
+
         if self._s3_client is None:
             try:
                 import boto3

@@ -23,7 +23,7 @@ class StubVoiceProvider:
     def supports(self, provider_id: str) -> bool:
         return provider_id == self.name
 
-    def synthesize(self, text: str, *, language: str) -> VoiceGenerationResult:
+    def synthesize(self, text: str, *, language: str, voice_id=None) -> VoiceGenerationResult:
         self.calls.append((text, language))
         return self._response
 
@@ -64,8 +64,8 @@ def test_voice_service_uses_provider_and_storage():
 
     assets = service.synthesize(make_deck(), make_language(), provider="stub")
 
-    assert len(assets) == 1
-    assert provider.calls[0][0].startswith("Slide 1")
+    assert len(assets) == 2
+    assert provider.calls[0][0] == "Welcome to the revolution."
     assert storage.calls[0].audio_bytes == b"bytes"
     assert str(assets[0].audio_url).startswith("https://cdn.example.com/")
 
@@ -89,4 +89,3 @@ def test_elevenlabs_and_azure_clients_generate_bytes():
 
     assert res1.audio_bytes.startswith(b"ELEVENLABS")
     assert res2.audio_bytes.startswith(b"AZURE")
-

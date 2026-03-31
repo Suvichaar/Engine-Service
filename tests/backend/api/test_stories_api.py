@@ -36,6 +36,20 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("CDN_HTML_BASE", "https://stories.example.com/")
     monkeypatch.setenv("CDN_BASE", "https://cdn.example.com/")
     monkeypatch.setenv("DEFAULT_ERROR_IMAGE", "https://cdn.example.com/error.jpg")
+    monkeypatch.setenv("AI_IMAGE_ENDPOINT", "https://stub.example.com")
+    monkeypatch.setenv("AI_IMAGE_API_KEY", "stub-key")
+    monkeypatch.setenv("PEXELS_API_KEY", "stub-key")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "stub-key")
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "stub-voice")
+    monkeypatch.delenv("AZURE_KEYVAULT_URL", raising=False)
+
+    from app.core import get_settings
+    from app.main import get_model_client, get_orchestrator, get_prompt_service, get_session_factory
+    get_settings.cache_clear()
+    get_model_client.cache_clear()
+    get_orchestrator.cache_clear()
+    get_prompt_service.cache_clear()
+    get_session_factory.cache_clear()
     from app.main import app  # imported after env override
 
     client = TestClient(app)
@@ -45,6 +59,11 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
             db_path.unlink()
         except PermissionError:
             pass
+    get_settings.cache_clear()
+    get_model_client.cache_clear()
+    get_orchestrator.cache_clear()
+    get_prompt_service.cache_clear()
+    get_session_factory.cache_clear()
 
 
 def test_create_and_get_story(client: TestClient):
