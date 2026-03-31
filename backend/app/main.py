@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections import deque
+from datetime import datetime, timezone
 import logging
+import re
 import sys
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 # ============================================
 # LOGGING CONFIGURATION - MUST BE FIRST
@@ -48,8 +51,48 @@ logger.info(f"Log Level: {LOG_LEVEL}")
 logger.info("Handlers: stdout, stderr")
 logger.info("=" * 60)
 
+
+RECENT_LOGS: Deque[Dict[str, Any]] = deque(maxlen=500)
+
+_SENSITIVE_PATTERNS = [
+    re.compile(r"(?i)(api[_ -]?key|secret|password|token|speech[_ -]?key)\s*=\s*['\"]?([^,'\"\s]+)"),
+    re.compile(r"(?i)(aws_access_key_id|aws_secret_access_key)\s*=\s*['\"]?([^,'\"\s]+)"),
+]
+
+
+def _sanitize_log_message(message: str) -> str:
+    sanitized = message
+    for pattern in _SENSITIVE_PATTERNS:
+        sanitized = pattern.sub(lambda m: f"{m.group(1)}='***REDACTED***'", sanitized)
+    return sanitized
+
+
+class InMemoryLogHandler(logging.Handler):
+    """Keep a rolling window of structured logs for the local UI."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            RECENT_LOGS.append(
+                {
+                    "timestamp": datetime.fromtimestamp(
+                        record.created, tz=timezone.utc
+                    ).isoformat(),
+                    "logger": record.name,
+                    "level": record.levelname,
+                    "message": _sanitize_log_message(record.getMessage()),
+                }
+            )
+        except Exception:
+            self.handleError(record)
+
+
+_memory_log_handler = InMemoryLogHandler()
+_memory_log_handler.setLevel(logging.INFO)
+logging.getLogger().addHandler(_memory_log_handler)
+
 import httpx
 from fastapi import Body, Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.schemas import StoryCreateRequest, StoryResponse
@@ -93,6 +136,17 @@ from app.utils import is_placeholder_value
 
 
 app = FastAPI(title="Engine Service News Backend")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Add custom exception handler for better error messages
 @app.on_event("startup")
@@ -188,7 +242,12 @@ def get_orchestrator() -> StoryOrchestrator:
         bool(settings.elevenlabs and not is_placeholder_value(settings.elevenlabs.api_key)),
         bool(settings.elevenlabs and not is_placeholder_value(settings.elevenlabs.voice_id)),
     )
-    logger.warning("Voice config - azure_voice: %s", settings.azure_voice)
+    logger.warning(
+        "Voice config - azure_voice: speech_key_set=%s region=%s voice=%s",
+        bool(settings.azure_voice and not is_placeholder_value(settings.azure_voice.speech_key)),
+        settings.azure_voice.region if settings.azure_voice else None,
+        settings.azure_voice.voice if settings.azure_voice else None,
+    )
 
     user_input_service = DefaultUserInputService()
     language_service = _build_language_service(settings)
@@ -322,6 +381,7 @@ def get_orchestrator() -> StoryOrchestrator:
         aws_bucket=settings.aws.bucket,
         default_bg_image=settings.branding.default_bg_image,
         default_cover_image=settings.branding.default_cover_image,
+        placeholder_audio_url=settings.branding.placeholder_audio_url,
         organization=settings.branding.organization,
         publisher_logo_src=settings.branding.publisher_logo_src,
         user_name=settings.branding.user_name,
@@ -594,6 +654,22 @@ def list_templates():
 @app.get("/health")
 def healthcheck():
     return {"status": "ok"}
+
+
+@app.get("/logs")
+def get_logs(limit: int = 200, level: Optional[str] = None):
+    safe_limit = max(1, min(limit, 500))
+    entries = list(RECENT_LOGS)
+
+    if level:
+        level_upper = level.upper()
+        entries = [entry for entry in entries if entry["level"] == level_upper]
+
+    return {
+        "count": min(len(entries), safe_limit),
+        "total_buffered": len(RECENT_LOGS),
+        "logs": entries[-safe_limit:],
+    }
 
 
 @app.get("/stories/{story_id}/html")

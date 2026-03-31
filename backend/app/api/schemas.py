@@ -77,11 +77,18 @@ class StoryCreateRequest(BaseModel):
     # LEGACY: Keep for backward compatibility
     text_prompt: Optional[str] = Field(default=None, examples=["Create a factual short web story."])
     notes: Optional[str] = Field(default=None, examples=["Make it in Hindi"])
+    input_mode: Optional[str] = Field(default=None, examples=["slideBySlide"])
+    slide_inputs: List[str] = Field(default_factory=list)
     urls: List[HttpUrl] = Field(default_factory=list)
     attachments: List[str] = Field(default_factory=list)
+    image_references: List[str] = Field(
+        default_factory=list,
+        description="Optional background reference images for custom upload or image-to-image AI generation.",
+    )
     prompt_keywords: List[str] = Field(default_factory=list)
     image_source: Optional[str] = Field(default=None, examples=["ai"])
     voice_engine: Optional[str] = Field(default=None, examples=["elevenlabs_pro"])
+    voice_id: Optional[str] = Field(default=None, examples=["yD0Zg2jxgfQLY8I2MEHO"])
 
     @field_validator("template_key")
     @classmethod

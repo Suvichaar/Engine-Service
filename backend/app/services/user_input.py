@@ -86,6 +86,12 @@ class DefaultUserInputService(UserInputService):
             "category": raw_inputs.get("category"),
             "image_source": raw_inputs.get("image_source"),
             "voice_engine": raw_inputs.get("voice_engine"),
+            "voice_id": raw_inputs.get("voice_id"),
+            "metadata": {
+                "input_mode": raw_inputs.get("input_mode"),
+                "slide_inputs": self._normalize_slide_inputs(raw_inputs.get("slide_inputs")),
+                "image_references": self._normalize_attachments(raw_inputs.get("image_references")),
+            },
         }
         try:
             return IntakePayload(**candidate)
@@ -139,3 +145,12 @@ class DefaultUserInputService(UserInputService):
         except (TypeError, ValueError):
             return value
 
+    def _normalize_slide_inputs(self, values: Any) -> list[str]:
+        if values is None:
+            return []
+        if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+            return [str(item).strip() for item in values if str(item).strip()]
+        if isinstance(values, (str, bytes)):
+            text = str(values).strip()
+            return [text] if text else []
+        return [str(values).strip()]

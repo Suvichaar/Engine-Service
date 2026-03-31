@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Iterable, Protocol
+from typing import Iterable, Optional, Protocol
 
 from .dto import (
     AnalysisReport,
@@ -101,7 +101,13 @@ class ImageAssetPipeline(Protocol):
 class VoiceSynthesisService(Protocol):
     """Produce narrated audio assets."""
 
-    def synthesize(self, deck: SlideDeck, language: LanguageMetadata, provider: str) -> list[VoiceAsset]:
+    def synthesize(
+        self,
+        deck: SlideDeck,
+        language: LanguageMetadata,
+        provider: str,
+        voice_id: Optional[str] = None,
+    ) -> list[VoiceAsset]:
         """Return voice assets for the slide deck."""
 
 

@@ -22,7 +22,7 @@ class VoiceProvider(Protocol):
     def supports(self, provider_id: str) -> bool:
         """Return True if this provider matches the requested provider identifier."""
 
-    def synthesize(self, text: str, *, language: str) -> "VoiceGenerationResult":
+    def synthesize(self, text: str, *, language: str, voice_id: Optional[str] = None) -> "VoiceGenerationResult":
         """Generate audio content for a given text and language."""
 
 
@@ -56,7 +56,13 @@ class DefaultVoiceSynthesisService(VoiceSynthesisService):
         self._storage = storage
         self._placeholder_audio_url = placeholder_audio_url
 
-    def synthesize(self, deck: SlideDeck, language: LanguageMetadata, provider: str) -> list[VoiceAsset]:
+    def synthesize(
+        self,
+        deck: SlideDeck,
+        language: LanguageMetadata,
+        provider: str,
+        voice_id: Optional[str] = None,
+    ) -> list[VoiceAsset]:
         logger = logging.getLogger(__name__)
         voice_provider = self._resolve_provider(provider)
         if voice_provider is None:
@@ -78,7 +84,11 @@ class DefaultVoiceSynthesisService(VoiceSynthesisService):
                 slide_text = slide.text.strip()
             
             try:
-                audio = voice_provider.synthesize(slide_text, language=language.language_code)
+                audio = voice_provider.synthesize(
+                    slide_text,
+                    language=language.language_code,
+                    voice_id=voice_id,
+                )
                 filename = f"{uuid4()}.{audio.format}"
                 asset = self._storage.store(audio=audio, filename=filename)
                 assets.append(asset)
@@ -123,10 +133,11 @@ class ElevenLabsClient:
         )
         return match
 
-    def synthesize(self, text: str, *, language: str) -> VoiceGenerationResult:
+    def synthesize(self, text: str, *, language: str, voice_id: Optional[str] = None) -> VoiceGenerationResult:
         logger = logging.getLogger(__name__)
+        effective_voice_id = voice_id or self._voice_id
         logger.info("🎤 ElevenLabs synthesis started: text_length=%d, language=%s, voice_id=%s", 
-                    len(text), language, self._voice_id)
+                    len(text), language, effective_voice_id)
         
         headers = {
             "xi-api-key": self._api_key,
@@ -138,7 +149,7 @@ class ElevenLabsClient:
             "voice_settings": {"stability": 0.5, "similarity_boost": 0.5},
         }
         try:
-            api_url = f"https://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}"
+            api_url = f"https://api.elevenlabs.io/v1/text-to-speech/{effective_voice_id}"
             logger.info("📡 Calling ElevenLabs API: %s", api_url)
             with httpx.Client(timeout=30.0) as client:
                 response = client.post(
@@ -156,7 +167,7 @@ class ElevenLabsClient:
             audio_bytes = f"ELEVENLABS:{language}:{text}".encode("utf-8")
         
         return VoiceGenerationResult(
-            audio_bytes=audio_bytes, format="mp3", voice_id=self._voice_id, metadata={"provider": self.name}
+            audio_bytes=audio_bytes, format="mp3", voice_id=effective_voice_id, metadata={"provider": self.name}
         )
 
 
@@ -173,7 +184,7 @@ class AzureTTSClient:
     def supports(self, provider_id: str) -> bool:
         return provider_id == self.name
 
-    def synthesize(self, text: str, *, language: str) -> VoiceGenerationResult:
+    def synthesize(self, text: str, *, language: str, voice_id: Optional[str] = None) -> VoiceGenerationResult:
         headers = {
             "Ocp-Apim-Subscription-Key": self._api_key,
             "Content-Type": "application/ssml+xml",

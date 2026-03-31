@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import base64
 import logging
+import mimetypes
 from dataclasses import dataclass
 from typing import Iterable, List, Mapping, Optional, Protocol, Sequence
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
@@ -95,7 +97,36 @@ class DefaultImageAssetPipeline(ImageAssetPipeline):
         provider_name = getattr(provider, "source", type(provider).__name__)
         print(f"✅ Using image provider: {provider_name}")
         logger.warning("🖼️ Using image provider: %s", provider_name)
-        contents = provider.generate(deck, payload)
+        try:
+            contents = provider.generate(deck, payload)
+        except Exception as exc:
+            logger.warning(
+                "🖼️ Provider %s failed during image generation: %s",
+                provider_name,
+                exc,
+                exc_info=True,
+            )
+            contents = []
+
+        if provider_name == "ai" and not contents:
+            fallback_provider = self._find_provider_by_source("pexels")
+            if fallback_provider is not None:
+                logger.warning(
+                    "🖼️ AI image generation produced no assets. Falling back to Pexels for this story."
+                )
+                fallback_payload = payload.model_copy(update={"image_source": "pexels"})
+                try:
+                    contents = fallback_provider.generate(deck, fallback_payload)
+                    provider = fallback_provider
+                    provider_name = getattr(provider, "source", type(provider).__name__)
+                except Exception as exc:
+                    logger.warning(
+                        "🖼️ Pexels fallback also failed after AI generation failure: %s",
+                        exc,
+                        exc_info=True,
+                    )
+                    contents = []
+
         print(f"✅ Provider {provider_name} generated {len(contents)} image contents\n")
         logger.warning("🖼️ Provider %s generated %d image contents", provider_name, len(contents))
         assets: List[ImageAsset] = []
@@ -141,6 +172,12 @@ class DefaultImageAssetPipeline(ImageAssetPipeline):
                 return provider
         return None
 
+    def _find_provider_by_source(self, source: str) -> Optional[ImageProvider]:
+        for provider in self._providers:
+            if getattr(provider, "source", None) == source:
+                return provider
+        return None
+
 
 # --- Provider Implementations -------------------------------------------------
 
@@ -159,6 +196,112 @@ class AIImageProvider:
         self._api_key = api_key
         self._min_cooldown_seconds = cooldown_seconds  # Configurable cooldown
         self._language_model = language_model  # For automatic alt_text generation
+
+    def _uses_foundry_provider_api(self) -> bool:
+        return "/providers/blackforestlabs/" in self._endpoint or ".services.ai.azure.com/" in self._endpoint
+
+    def _build_headers(self) -> dict[str, str]:
+        if self._uses_foundry_provider_api():
+            return {
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            }
+
+        return {
+            "api-key": self._api_key,
+            "Content-Type": "application/json",
+        }
+
+    def _build_request_body(self, prompt: str, reference_image_bytes: Optional[bytes]) -> dict[str, object]:
+        if self._uses_foundry_provider_api():
+            body: dict[str, object] = {
+                "prompt": prompt,
+                "width": 1024,
+                "height": 1024,
+                "n": 1,
+                "model": "FLUX.2-pro",
+            }
+            if reference_image_bytes:
+                body["input_image"] = base64.b64encode(reference_image_bytes).decode("utf-8")
+            return body
+
+        return {"prompt": prompt, "size": "1024x1024"}
+
+    def _get_reference_image_refs(self, payload: IntakePayload) -> list[str]:
+        metadata = payload.metadata or {}
+        references = metadata.get("image_references")
+        if isinstance(references, list):
+            return [str(item) for item in references if item]
+        return []
+
+    def _pick_reference_image_ref(self, payload: IntakePayload, slide_index: int) -> Optional[str]:
+        references = self._get_reference_image_refs(payload)
+        if not references:
+            return None
+        if slide_index < len(references):
+            return references[slide_index]
+        return references[-1]
+
+    def _load_reference_image_bytes(self, reference: str) -> Optional[bytes]:
+        logger = logging.getLogger(__name__)
+
+        if reference.startswith("data:"):
+            header, _, data = reference.partition(",")
+            if ";base64" not in header.lower():
+                logger.warning("Skipping unsupported data URL reference image format")
+                return None
+            mime_type = header[5:].split(";")[0].lower()
+            if not mime_type.startswith("image/"):
+                logger.info("Skipping non-image data URL reference: %s", mime_type or "unknown")
+                return None
+            return base64.b64decode(data)
+
+        if reference.startswith(("http://", "https://")):
+            mime_type, _ = mimetypes.guess_type(reference)
+            if mime_type and not mime_type.startswith("image/"):
+                logger.info("Skipping non-image reference URL: %s", reference)
+                return None
+            with httpx.Client(timeout=60.0) as client:
+                response = client.get(reference)
+                response.raise_for_status()
+                return response.content
+
+        if reference.startswith("s3://"):
+            try:
+                import boto3
+                from app.core import get_settings
+
+                settings = get_settings()
+                parsed = urlparse(reference)
+                bucket = parsed.netloc
+                key = parsed.path.lstrip("/")
+                s3_client = boto3.client(
+                    "s3",
+                    aws_access_key_id=settings.aws.access_key,
+                    aws_secret_access_key=settings.aws.secret_key,
+                    region_name=settings.aws.region,
+                )
+                response = s3_client.get_object(Bucket=bucket, Key=key)
+                return response["Body"].read()
+            except Exception as exc:
+                logger.warning("Failed to load S3 reference image %s: %s", reference, exc)
+                return None
+
+        mime_type, _ = mimetypes.guess_type(reference)
+        if mime_type and not mime_type.startswith("image/"):
+            logger.info("Skipping non-image local reference: %s", reference)
+            return None
+
+        try:
+            from pathlib import Path
+
+            path = Path(reference)
+            if path.exists():
+                return path.read_bytes()
+        except Exception as exc:
+            logger.warning("Failed to load local reference image %s: %s", reference, exc)
+
+        return None
 
     def supports(self, payload: IntakePayload) -> bool:
         result = payload.image_source == "ai"
@@ -342,7 +485,10 @@ Return only the English description that captures the visual essence, no quotes 
             )
 
             try:
-                image_content = self._generate_image(slide.placeholder_id, prompt)
+                reference_image = self._load_reference_image_bytes(
+                    self._pick_reference_image_ref(payload, idx)
+                ) if self._pick_reference_image_ref(payload, idx) else None
+                image_content = self._generate_image(slide.placeholder_id, prompt, reference_image_bytes=reference_image)
                 contents.append(image_content)
                 last_successful_image = image_content
                 logger.info("✅ Generated image for slide %d (index %d)", idx + 1, idx)
@@ -360,7 +506,14 @@ Return only the English description that captures the visual essence, no quotes 
                         if article_content
                         else self._generate_safe_news_prompt(slide_text, slide_index=idx)
                     )
-                    fallback_content = self._generate_image(slide.placeholder_id, fallback_prompt)
+                    reference_image = self._load_reference_image_bytes(
+                        self._pick_reference_image_ref(payload, idx)
+                    ) if self._pick_reference_image_ref(payload, idx) else None
+                    fallback_content = self._generate_image(
+                        slide.placeholder_id,
+                        fallback_prompt,
+                        reference_image_bytes=reference_image,
+                    )
                     contents.append(fallback_content)
                     last_successful_image = fallback_content
                     logger.info("✅ Generated fallback image for slide %d", idx + 1)
@@ -378,7 +531,13 @@ Return only the English description that captures the visual essence, no quotes 
         logger.info("📊 Total AI images generated: %d", len(contents))
         return contents
 
-    def _generate_image(self, placeholder_id: str, prompt: str, retry_count: int = 3) -> ImageContent:
+    def _generate_image(
+        self,
+        placeholder_id: str,
+        prompt: str,
+        retry_count: int = 3,
+        reference_image_bytes: Optional[bytes] = None,
+    ) -> ImageContent:
         import base64
         import logging
         import time
@@ -393,16 +552,13 @@ Return only the English description that captures the visual essence, no quotes 
             logger.warning("Prompt too long (%d chars), truncating to %d chars", len(prompt), max_prompt_length)
             prompt = prompt[:max_prompt_length]
         
-        headers = {
-            "api-key": self._api_key,
-            "Content-Type": "application/json",
-        }
-        body = {"prompt": prompt, "size": "1024x1024"}
+        headers = self._build_headers()
+        body = self._build_request_body(prompt, reference_image_bytes)
         
         last_exception = None
         for attempt in range(retry_count):
             try:
-                with httpx.Client(timeout=30.0) as client:
+                with httpx.Client(timeout=120.0) as client:
                     response = client.post(self._endpoint, headers=headers, json=body)
                     
                     if response.status_code == 400:
@@ -455,26 +611,32 @@ Return only the English description that captures the visual essence, no quotes 
                                 # Extract topic from original prompt for context
                                 original_topic = prompt.split(",")[0].strip()[:50] if prompt else None
                                 safe_prompt = self._generate_content_related_safe_prompt(original_topic, prompt)
-                                body["prompt"] = safe_prompt
+                                body = self._build_request_body(safe_prompt, reference_image_bytes)
                         elif attempt == 1:
                             # Second retry: use simpler content-related prompt
                             logger.warning("Content policy violation still occurring (attempt %d/%d), using simpler content-related prompt", attempt + 1, retry_count)
                             original_topic = prompt.split(",")[0].strip()[:30] if prompt else None
                             safe_prompt = self._generate_content_related_safe_prompt(original_topic, prompt, simpler=True)
-                            body["prompt"] = safe_prompt
+                            body = self._build_request_body(safe_prompt, reference_image_bytes)
                         else:
                             # Last retry: use minimal but still content-aware prompt
                             logger.warning("Content policy violation persists (attempt %d/%d), using minimal content-aware prompt", attempt + 1, retry_count)
                             original_topic = prompt.split(",")[0].strip()[:20] if prompt else None
                             if original_topic:
-                                body["prompt"] = f"professional illustration about {original_topic}, clean, modern, positive"
+                                body = self._build_request_body(
+                                    f"professional illustration about {original_topic}, clean, modern, positive",
+                                    reference_image_bytes,
+                                )
                             else:
-                                body["prompt"] = "professional news illustration, clean, modern, positive"
+                                body = self._build_request_body(
+                                    "professional news illustration, clean, modern, positive",
+                                    reference_image_bytes,
+                                )
                     else:
                         # For other 400 errors, try with a simpler prompt
                         logger.warning("400 Bad Request on attempt %d/%d, trying simpler prompt", attempt + 1, retry_count)
                         simple_prompt = prompt.split("|")[0].strip()[:100]  # Take first part, limit length more aggressively
-                        body["prompt"] = simple_prompt
+                        body = self._build_request_body(simple_prompt, reference_image_bytes)
                     time.sleep(2)  # Wait before retry
                 else:
                     # For other errors or last attempt, raise
@@ -1062,7 +1224,8 @@ class UserUploadProvider:
     source = "custom"
 
     def supports(self, payload: IntakePayload) -> bool:
-        return payload.image_source == "custom" and bool(payload.attachments)
+        image_references = (payload.metadata or {}).get("image_references") or []
+        return payload.image_source == "custom" and bool(image_references or payload.attachments)
 
     def generate(self, deck: SlideDeck, payload: IntakePayload) -> Sequence[ImageContent]:
         contents: list[ImageContent] = []
@@ -1071,8 +1234,10 @@ class UserUploadProvider:
         logger = logging.getLogger(__name__)
         
         # Validate attachment count for better handling
+        image_references = (payload.metadata or {}).get("image_references") or []
+        attachments = image_references or payload.attachments
         num_slides = len(deck.slides)
-        num_attachments = len(payload.attachments)
+        num_attachments = len(attachments)
         
         if num_attachments != num_slides:
             logger.warning(
@@ -1088,10 +1253,10 @@ class UserUploadProvider:
             # Determine which attachment to use
             if idx < num_attachments:
                 # Use corresponding attachment
-                attachment = payload.attachments[idx]
+                attachment = attachments[idx]
             elif num_attachments > 0:
                 # Use last attachment for remaining slides (repeat last image)
-                attachment = payload.attachments[-1]
+                attachment = attachments[-1]
                 logger.debug(f"Using last attachment for slide {idx} (repeating image)")
             else:
                 # No attachments available, skip this slide
@@ -1105,7 +1270,6 @@ class UserUploadProvider:
     def _to_content(self, placeholder_id: str, attachment: str) -> ImageContent:
         """Convert attachment (URL, S3 URI, or file path) to ImageContent with actual bytes."""
         import logging
-        from urllib.parse import urlparse
         logger = logging.getLogger(__name__)
         
         # Extract filename from attachment
@@ -1118,15 +1282,26 @@ class UserUploadProvider:
         original_s3_key = None  # Preserve original S3 key if attachment is S3 URI
         
         try:
-            # Case 1: HTTP/HTTPS URL - download the image
-            if attachment.startswith(("http://", "https://")):
+            # Case 1: data URL from browser uploads
+            if attachment.startswith("data:"):
+                header, _, data = attachment.partition(",")
+                if ";base64" not in header.lower():
+                    raise ValueError("Unsupported data URL format")
+                image_bytes = base64.b64decode(data)
+                mime_type = header[5:].split(";")[0].lower()
+                extension = mimetypes.guess_extension(mime_type) or ".png"
+                filename = f"{placeholder_id}{extension}"
+                logger.info("Loaded image from data URL (%d bytes)", len(image_bytes))
+
+            # Case 2: HTTP/HTTPS URL - download the image
+            elif attachment.startswith(("http://", "https://")):
                 with httpx.Client(timeout=30.0) as client:
                     response = client.get(attachment)
                     response.raise_for_status()
                     image_bytes = response.content
                     logger.info("Downloaded image from URL: %s (%d bytes)", attachment, len(image_bytes))
             
-            # Case 2: S3 URI (s3://bucket/key) - extract key and optionally load from S3
+            # Case 3: S3 URI (s3://bucket/key) - extract key and optionally load from S3
             elif attachment.startswith("s3://"):
                 # Extract S3 key from URI (preserve for CDN URL generation)
                 parsed = urlparse(attachment)
@@ -1140,7 +1315,7 @@ class UserUploadProvider:
                 image_bytes = b""  # Empty bytes - storage service will skip upload if original_s3_key is provided
                 logger.info("Skipping download for S3 URI (will use original key: %s)", original_s3_key)
             
-            # Case 3: Local file path - read from filesystem
+            # Case 4: Local file path - read from filesystem
             else:
                 from pathlib import Path
                 path = Path(attachment)

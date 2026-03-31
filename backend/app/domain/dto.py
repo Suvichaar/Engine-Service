@@ -38,6 +38,9 @@ class IntakePayload(BaseModel):
     voice_engine: Optional[constr(pattern="^(elevenlabs_pro|azure_basic)$")] = Field(
         default=None, description="Selected text-to-speech provider."
     )
+    voice_id: Optional[constr(min_length=1)] = Field(
+        default=None, description="Optional provider-specific voice identifier override."
+    )
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata for pipeline processing.")
 
 

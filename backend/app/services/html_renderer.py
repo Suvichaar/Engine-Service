@@ -97,6 +97,7 @@ class PlaceholderMapper:
         self,
         default_bg_image: str = "https://media.example.org/default-bg.png",
         default_cover_image: str = "https://media.example.org/default-cover.png",
+        placeholder_audio_url: str = "https://media.example.org/placeholder-audio.mp3",
         organization: str = "Example",
         cdn_prefix_media: str = "https://media.example.org/",
         aws_bucket: str = "example-bucket",
@@ -112,6 +113,7 @@ class PlaceholderMapper:
     ) -> None:
         self._default_bg_image = default_bg_image
         self._default_cover_image = default_cover_image
+        self._placeholder_audio_url = placeholder_audio_url
         self._organization = organization
         self._cdn_prefix_media = cdn_prefix_media.rstrip("/") + "/"
         self._aws_bucket = aws_bucket
@@ -321,6 +323,7 @@ class PlaceholderMapper:
         # Audio URLs
         # s1audio1 for cover, s2audio1 for slide 2, etc.
         placeholders["storytitle_audiourl"] = self._get_audio_url(record.voice_assets, 0)
+        placeholders["cta_audiourl"] = self._placeholder_audio_url
         for idx in range(1, len(record.slide_deck.slides) + 1):
             # s1audio1 = voice_assets[0] (cover), s2audio1 = voice_assets[1] (slide 2), etc.
             audio_idx = idx - 1  # Convert slide number to audio index
@@ -583,6 +586,7 @@ class HTMLTemplateRenderer:
         aws_bucket: str = "example-bucket",
         default_bg_image: str = "https://media.example.org/default-bg.png",
         default_cover_image: str = "https://media.example.org/default-cover.png",
+        placeholder_audio_url: str = "https://media.example.org/placeholder-audio.mp3",
         organization: str = "Example",
         publisher_logo_src: str = "https://media.example.org/logo.png",
         user_name: str = "Editorial Team",
@@ -597,6 +601,7 @@ class HTMLTemplateRenderer:
         self._mapper = placeholder_mapper or PlaceholderMapper(
             default_bg_image=default_bg_image,
             default_cover_image=default_cover_image,
+            placeholder_audio_url=placeholder_audio_url,
             organization=organization,
             cdn_prefix_media=cdn_prefix_media,
             aws_bucket=aws_bucket,

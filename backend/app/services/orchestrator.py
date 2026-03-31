@@ -20,7 +20,9 @@ from app.domain.dto import (
     IntakePayload,
     LanguageMetadata,
     Mode,
+    NewsNarrative,
     RenderedPrompt,
+    SlideBlock,
     SlideDeck,
     StoryRecord,
     VoiceAsset,
@@ -251,14 +253,17 @@ class StoryOrchestrator:
             raise ValueError(f"Prompt rendering failed: {e}") from e
 
         try:
-            narrative = self.model_client.generate(
-                rendered_prompt,
-                doc_insights,
-                slide_count=payload.slide_count,
-                category=request.category,
-                subcategory=None,
-                emotion=None,
-            )
+            if self._should_preserve_slide_inputs(payload):
+                narrative = self._build_narrative_from_slide_inputs(payload, language)
+            else:
+                narrative = self.model_client.generate(
+                    rendered_prompt,
+                    doc_insights,
+                    slide_count=payload.slide_count,
+                    category=request.category,
+                    subcategory=None,
+                    emotion=None,
+                )
             logger.debug("Narrative generated, slides: %d", len(narrative.slide_deck.slides))
         except Exception as e:
             logger.error("Narrative generation failed: %s", e, exc_info=True)
@@ -371,7 +376,12 @@ class StoryOrchestrator:
                 voice_assets = []
             else:
                 logger.info("🎤 Starting voice synthesis for %d slides...", len(narrative.slide_deck.slides))
-                voice_assets = self.voice_service.synthesize(narrative.slide_deck, language, voice_provider)
+                voice_assets = self.voice_service.synthesize(
+                    narrative.slide_deck,
+                    language,
+                    voice_provider,
+                    payload.voice_id,
+                )
                 logger.info("✅ Voice assets synthesized: count=%d", len(voice_assets))
                 
                 # Log each voice asset
@@ -535,8 +545,11 @@ class StoryOrchestrator:
             user_input=request.user_input,  # NEW: Unified input support
             text_prompt=request.text_prompt,
             notes=request.notes,
+            input_mode=request.input_mode,
+            slide_inputs=request.slide_inputs,
             urls=request.urls,
             attachments=request.attachments,
+            image_references=request.image_references,
             prompt_keywords=request.prompt_keywords,
             mode=request.mode.value,
             template_key=request.template_key,
@@ -544,6 +557,44 @@ class StoryOrchestrator:
             category=request.category,
             image_source=request.image_source,
             voice_engine=request.voice_engine,
+            voice_id=request.voice_id,
+        )
+
+    def _should_preserve_slide_inputs(self, payload: IntakePayload) -> bool:
+        metadata = payload.metadata or {}
+        return metadata.get("input_mode") == "slideBySlide" and bool(metadata.get("slide_inputs"))
+
+    def _build_narrative_from_slide_inputs(
+        self,
+        payload: IntakePayload,
+        language: LanguageMetadata,
+    ) -> NewsNarrative:
+        raw_slide_inputs = (payload.metadata or {}).get("slide_inputs") or []
+        editable_slide_count = max(int(payload.slide_count) - 1, 1)
+        preserved_slides = [
+            str(slide).strip()
+            for slide in raw_slide_inputs[:editable_slide_count]
+            if str(slide).strip()
+        ]
+
+        if not preserved_slides:
+            raise ValueError("Slide-by-slide mode requires slide inputs.")
+
+        slide_deck = SlideDeck(
+            template_key=payload.template_key,
+            language_code=language.language_code,
+            slides=[
+                SlideBlock(placeholder_id=f"section_{idx + 1}", text=slide_text)
+                for idx, slide_text in enumerate(preserved_slides)
+            ],
+        )
+
+        return NewsNarrative(
+            mode=payload.mode,
+            slide_deck=slide_deck,
+            raw_output="Preserved slide-by-slide input without model rewriting.",
+            headlines=[preserved_slides[0]],
+            bullet_points=preserved_slides[1:],
         )
 
     def _apply_analysis(self, doc_insights: DocInsights, analysis: AnalysisReport) -> None:
