@@ -100,27 +100,15 @@ async def startup_event():
     """Initialize orchestrator at startup to show config logs immediately."""
     import logging
     logger = logging.getLogger(__name__)
-    logger.warning("🚀 Application startup - initializing orchestrator...")
+    logger.info("🚀 Application startup - initializing orchestrator...")
     # Force initialization to show config logs
     get_orchestrator()
-    logger.warning("✅ Orchestrator initialized successfully")
+    logger.info("✅ Orchestrator initialized successfully")
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     """Global exception handler to return detailed error messages."""
-    import traceback
     logger = logging.getLogger(__name__)
-    
-    # Print to console for immediate visibility
-    print("\n" + "="*60)
-    print("GLOBAL EXCEPTION HANDLER - UNHANDLED ERROR:")
-    print("="*60)
-    print(f"Exception Type: {type(exc).__name__}")
-    print(f"Exception Message: {str(exc)}")
-    print("\nFull Traceback:")
-    traceback.print_exc()
-    print("="*60 + "\n")
-    
     logger.error("Unhandled exception: %s", exc, exc_info=True)
     
     # Return detailed error in JSON format
@@ -206,26 +194,32 @@ def get_orchestrator() -> StoryOrchestrator:
     model_router = DefaultModelRouter({Mode.CURIOUS: curious_client})
 
     image_providers = []
-    if settings.ai_image and not (
-        is_placeholder_value(settings.ai_image.endpoint) or is_placeholder_value(settings.ai_image.api_key)
-    ):
-        logger.warning("✅ Initializing AIImageProvider with endpoint: %s...", settings.ai_image.endpoint[:80])
-        image_providers.append(
-            AIImageProvider(
-                endpoint=settings.ai_image.endpoint,
-                api_key=settings.ai_image.api_key,
-                language_model=language_model,  # Pass language_model for automatic alt_text generation
+    if settings.ai_image:
+        endpoint_ok = not is_placeholder_value(settings.ai_image.endpoint)
+        api_key_ok = not is_placeholder_value(settings.ai_image.api_key)
+        
+        if endpoint_ok and api_key_ok:
+            logger.info("✅ Initializing AIImageProvider")
+            image_providers.append(
+                AIImageProvider(
+                    endpoint=settings.ai_image.endpoint,
+                    api_key=settings.ai_image.api_key,
+                    language_model=language_model,
+                )
             )
-        )
+        else:
+            logger.warning("❌ AIImageProvider not initialized - invalid config")
     else:
         logger.warning("❌ AIImageProvider not initialized - missing ai_image configuration")
+        
     if settings.pexels and not is_placeholder_value(settings.pexels.api_key):
-        logger.warning("✅ Initializing PexelsImageProvider")
+        logger.info("✅ Initializing PexelsImageProvider")
         image_providers.append(PexelsImageProvider(api_key=settings.pexels.api_key))
     else:
-        logger.warning("❌ PexelsImageProvider not initialized - missing pexels configuration")
+        logger.warning("❌ PexelsImageProvider not initialized - missing configuration")
+    
     image_providers.append(UserUploadProvider())
-    logger.warning(
+    logger.debug(
         "📷 Registered image providers: %s",
         [getattr(p, 'source', type(p).__name__) for p in image_providers],
     )
@@ -485,6 +479,15 @@ def create_story(request: StoryCreateRequest, orchestrator: StoryOrchestrator = 
 
 from fastapi import Depends, FastAPI, HTTPException
 
+import re
+
+def resolve_story(story_id: str, orchestrator: StoryOrchestrator) -> StoryRecord:
+    """Helper to resolve a story by UUID or Slug."""
+    uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+    if uuid_pattern.match(story_id):
+        return orchestrator.get_story(story_id)
+    return orchestrator.get_story_by_slug(story_id)
+
 @app.get("/stories/{story_id}", response_model=StoryResponse)
 def get_story(
     story_id: str, 
@@ -495,18 +498,8 @@ def get_story(
     If story_id looks like a UUID, use UUID lookup.
     Otherwise, treat it as a slug and look up by canurl.
     """
-    import re
-    from uuid import UUID
-    
     try:
-        # Check if story_id is a valid UUID format
-        uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
-        if uuid_pattern.match(story_id):
-            # It's a UUID, use regular lookup
-            record = orchestrator.get_story(story_id)
-        else:
-            # It's a slug, use slug-based lookup
-            record = orchestrator.get_story_by_slug(story_id)
+        record = resolve_story(story_id, orchestrator)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Story not found") from exc
     return StoryResponse.model_validate(record.model_dump())
@@ -533,7 +526,7 @@ def get_story_html(
     
     try:
         logger.info(f"🔍 Getting HTML for story_id: {story_id}")
-        record = orchestrator.get_story(story_id)
+        record = resolve_story(story_id, orchestrator)
         logger.info(f"✅ Story found: template_key={record.template_key}, mode={record.mode}")
         
         if not orchestrator.html_renderer:
@@ -555,7 +548,34 @@ def get_story_html(
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as exc:
-        logger.error(f"❌ HTML rendering failed for story_id={story_id}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"HTML rendering failed: {str(exc)}") from exc
+
+
+from fastapi.responses import HTMLResponse
+
+@app.get("/stories/{story_id}/view", response_class=HTMLResponse)
+def view_story_html(
+    story_id: str, 
+    orchestrator: StoryOrchestrator = Depends(get_orchestrator)
+):
+    """View rendered HTML directly in the browser."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        record = resolve_story(story_id, orchestrator)
+        if not orchestrator.html_renderer:
+            raise HTTPException(status_code=503, detail="HTML renderer not available")
+
+        html_content = orchestrator.html_renderer.render(
+            record=record,
+            template_key=record.template_key,
+            template_source="file",
+        )
+        return HTMLResponse(content=html_content)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Story not found") from exc
+    except Exception as exc:
         raise HTTPException(status_code=500, detail=f"HTML rendering failed: {str(exc)}") from exc
 
 
@@ -566,7 +586,7 @@ def test_story_generation(
 ):
     """Test endpoint to verify story generation and components."""
     try:
-        record = orchestrator.get_story(story_id)
+        record = resolve_story(story_id, orchestrator)
 
         test_results = {
             "story_id": str(record.id),

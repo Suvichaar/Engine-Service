@@ -30,7 +30,7 @@ def make_payload(**overrides):
         urls=["https://example.com"],
         attachments=[],
         prompt_keywords=["news", "update"],
-        mode="news",
+        mode="curious",
         template_key="modern",
         slide_count=4,
     )

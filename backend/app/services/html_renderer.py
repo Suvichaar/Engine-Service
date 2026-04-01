@@ -58,14 +58,8 @@ class TemplateLoader:
         # Try mode-specific template directory first
         mode_dir = base_dir / mode.value
         if not mode_dir.exists():
-            # Fallback: try news if mode-specific dir doesn't exist
-            fallback_dir = base_dir / "news"
-            if fallback_dir.exists():
-                mode_dir = fallback_dir
-                self._logger.warning("Mode-specific template dir not found, using fallback: %s", mode_dir)
-            else:
-                mode_dir = self._template_base_path
-                self._logger.warning("Using template_base_path as last resort: %s", mode_dir)
+            mode_dir = self._template_base_path
+            self._logger.warning("Using template_base_path as fallback: %s", mode_dir)
 
         template_path = mode_dir / f"{template_key}.html"
         if not template_path.exists():
@@ -167,22 +161,11 @@ class PlaceholderMapper:
         for idx, slide in enumerate(record.slide_deck.slides, start=1):
             placeholders[f"s{idx}paragraph1"] = slide.text or ""
 
-        # Images - Special handling for News mode with no image_source
-        # Ensure default images for cover and CTA slides when image_source is None, "", or "default"
+        # Images handling
         self._logger.info("Mapping images - mode: %s, image_source: %s, has_assets: %s", 
                          record.mode, image_source, len(record.image_assets) if record.image_assets else 0)
         
-        if False:
-            # News mode + no image_source → use default polariscover.png for cover and CTA
-            default_cover = self._default_cover_image
-            self._logger.info("News mode with default images: setting potraitcoverurl to %s", default_cover)
-            placeholders["image0"] = default_cover
-            # ALWAYS use direct default URL for News mode default images (no resize needed)
-            placeholders["potraitcoverurl"] = default_cover
-            placeholders["portraitcoverurl"] = default_cover  # Alternative spelling
-            placeholders["msthumbnailcoverurl"] = default_cover
-            self._logger.info("Set potraitcoverurl = %s", placeholders["potraitcoverurl"])
-        elif image_source == "custom" and record.image_assets and len(record.image_assets) > 0:
+        if image_source == "custom" and record.image_assets and len(record.image_assets) > 0:
             # Custom image_source → use custom image for cover slide too
             asset = record.image_assets[0]  # Cover image is at index 0
             # Generate portrait resolution URL (720x1280) for cover
@@ -240,40 +223,20 @@ class PlaceholderMapper:
                     self._logger.warning("⚠️ Cover slide: No S3 key or variants, using fallback: %s", cover_url[:80])
             else:
                 # No assets, use default with resizing
-                # For News mode, ensure default cover image is used for cover and CTA slides
-                if False:
-                    # Use default cover image for News mode
-                    default_cover = self._default_cover_image
-                    try:
-                        placeholders["potraitcoverurl"] = self._generate_resized_url(default_cover, 720, 1280)
-                    except Exception:
-                        placeholders["potraitcoverurl"] = default_cover
-                    placeholders["portraitcoverurl"] = placeholders["potraitcoverurl"]
-                    try:
-                        placeholders["msthumbnailcoverurl"] = self._generate_resized_url(default_cover, 300, 300)
-                    except Exception:
-                        placeholders["msthumbnailcoverurl"] = default_cover
-                else:
-                    try:
-                        placeholders["potraitcoverurl"] = self._generate_resized_url(cover_url, 720, 1280)
-                    except Exception:
-                        placeholders["potraitcoverurl"] = cover_url
-                    placeholders["portraitcoverurl"] = placeholders["potraitcoverurl"]
-                    try:
-                        placeholders["msthumbnailcoverurl"] = self._generate_resized_url(cover_url, 300, 300)
-                    except Exception:
-                        placeholders["msthumbnailcoverurl"] = cover_url
+                try:
+                    placeholders["potraitcoverurl"] = self._generate_resized_url(cover_url, 720, 1280)
+                except Exception:
+                    placeholders["potraitcoverurl"] = cover_url
+                placeholders["portraitcoverurl"] = placeholders["potraitcoverurl"]
+                try:
+                    placeholders["msthumbnailcoverurl"] = self._generate_resized_url(cover_url, 300, 300)
+                except Exception:
+                    placeholders["msthumbnailcoverurl"] = cover_url
 
         # Slide images (s1image1, s2image1, etc.)
-        # Special handling for News mode:
-        # - If image_source is blank/null/default → use default polarisslide.png for all slides
         # - If image_source is "custom" → use image_assets mapped to s1image1, s2image1, etc.
         # - Otherwise → use image_assets or default
-        if False:
-            # News mode + blank image_source → use default polarisslide.png for all slides
-            for idx in range(1, len(record.slide_deck.slides) + 1):
-                placeholders[f"s{idx}image1"] = self._default_bg_image
-        elif image_source == "custom" and record.image_assets:
+        if image_source == "custom" and record.image_assets:
             # Custom image_source → map image_assets to s1image1, s2image1, etc.
             # Note: image_assets are indexed by slide order (cover is index 0, first middle slide is index 1, etc.)
             for idx in range(1, len(record.slide_deck.slides) + 1):
@@ -573,9 +536,7 @@ Keywords:"""
         if record.input_language:
             keywords.append(record.input_language)
         keywords.append("web story")
-        if False:
-            keywords.append("news")
-        elif record.mode == Mode.CURIOUS:
+        if record.mode == Mode.CURIOUS:
             keywords.append("education")
             keywords.append("curious")
         return ", ".join(keywords)
@@ -622,20 +583,12 @@ class HTMLTemplateRenderer:
 
         # 2.5. Fix CTA slide placeholder for AI/Pexels/Custom images BEFORE replacement
         # CTA slide uses {{potraitcoverurl}} or {{cta_image_url}} which should be CTA image
-        # For News mode: use last slide's image
         # For Curious mode: use CTA-specific image (placeholder_id="cta-slide")
         # This applies to all image sources: ai, pexels, custom
         if image_source in ["ai", "pexels", "custom"] and record.image_assets and len(record.image_assets) > 0:
             cta_image_url = None
             
-            if False:
-                # News mode: use last slide's image
-                last_slide_num = len(record.slide_deck.slides)
-                cta_placeholder_key = f"s{last_slide_num}image1"
-                if cta_placeholder_key in placeholders:
-                    cta_image_url = placeholders[cta_placeholder_key]
-                    self._logger.info("Set CTA slide to use last slide's AI image: %s", cta_image_url[:80])
-            elif record.mode == Mode.CURIOUS:
+            if record.mode == Mode.CURIOUS:
                 # Curious mode: CTA image is generated last, so it's the last image_asset
                 # Total slides = deck.slides (cover + middle) + 1 CTA
                 # So image_assets should have: cover (0) + middle slides (1..n) + CTA (last)
@@ -699,6 +652,11 @@ class HTMLTemplateRenderer:
 
         # 6. Cleanup (remove stray curly braces from URLs)
         filled_html = self._cleanup_urls(filled_html)
+
+        # 6.5 Strip unused slide blocks that still contain unfilled {{...}} placeholders.
+        # This handles static templates (like curious-template-1) that have more hardcoded
+        # slides than the user requested. e.g. template has 7 slides but user asked for 4.
+        filled_html = self._strip_unfilled_slides(filled_html, record)
         
         # 7. Fix canonical link: Replace hardcoded "self.html" with actual canurl
         if record.canurl:
@@ -754,6 +712,67 @@ class HTMLTemplateRenderer:
         # Remove [links](url)
         text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
         return text.strip()
+
+    def _strip_unfilled_slides(self, html: str, record: StoryRecord) -> str:
+        """Remove <amp-story-page> blocks that still contain unfilled {{...}} placeholders.
+
+        Static templates (e.g. curious-template-1.html) ship with a fixed number of
+        hardcoded slide blocks.  When the user requests fewer slides than the template
+        provides, the surplus blocks retain raw ``{{s4paragraph1}}``-style text because
+        the LLM never generated content for them.  This method detects those blocks and
+        removes them so only meaningful slides are rendered.
+
+        The last slide (CTA / "KEEP LEARNING") is always preserved regardless of
+        whether it has placeholders, because its content is static.
+        """
+        # Split on <amp-story-page …> boundaries.  Each match is one slide block.
+        page_pattern = re.compile(
+            r'(<amp-story-page\b[^>]*>.*?</amp-story-page>)',
+            re.DOTALL,
+        )
+        pages = page_pattern.findall(html)
+        if not pages:
+            return html
+
+        # The last page in the template is CTA – always keep it.
+        kept: list[str] = []
+        removed_count = 0
+        for idx, page_html in enumerate(pages):
+            is_last = idx == len(pages) - 1
+            has_unfilled = re.search(r'\{\{s\d+\w+\}\}', page_html) is not None
+            if has_unfilled and not is_last:
+                removed_count += 1
+                self._logger.info(
+                    "🗑️ Stripping unfilled slide block %d (contains raw placeholders)", idx + 1
+                )
+            else:
+                kept.append(page_html)
+
+        if removed_count == 0:
+            return html
+
+        self._logger.info(
+            "🗑️ Stripped %d unfilled slide blocks (kept %d of %d)",
+            removed_count, len(kept), len(pages),
+        )
+
+        # Reconstruct: replace ALL page blocks in the original HTML with
+        # only the kept ones.
+        result = html
+        for page_html in pages:
+            result = result.replace(page_html, '', 1)
+        # Re-insert the kept pages at the position of the first removal
+        # (right before </amp-story>).
+        insert_point = result.find('</amp-story>')
+        if insert_point != -1:
+            joined = '\n'.join(kept)
+            result = result[:insert_point] + joined + '\n' + result[insert_point:]
+        else:
+            # Fallback: just join kept pages if we can't find the closing tag
+            result = html  # revert and skip stripping
+            self._logger.warning("Could not find </amp-story> to re-insert slides, skipping strip")
+
+        return result
 
     def _generate_all_slides(
         self, 
@@ -831,9 +850,6 @@ class HTMLTemplateRenderer:
                         img_asset = record.image_assets[asset_idx]
                         if img_asset.resized_variants:
                             image_url = str(img_asset.resized_variants[0])
-            elif False:
-                # News mode + blank image_source → use default polarisslide.png
-                image_url = default_bg
             else:
                 # Normal flow for AI images - directly use image_assets
                 # idx=1 (first middle slide) → image_assets[1], idx=2 → image_assets[2], etc.

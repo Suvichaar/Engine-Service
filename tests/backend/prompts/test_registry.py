@@ -2,18 +2,24 @@ from __future__ import annotations
 
 import pytest
 
-from app.prompts.registry import InvalidCategoryError, PromptNotFoundError, available_modes, get_prompt_config, render_prompt
+from app.prompts.registry import (
+    InvalidCategoryError,
+    PromptNotFoundError,
+    available_modes,
+    get_prompt_config,
+    render_prompt,
+)
 
 
 def test_available_modes_contains_expected_entries():
     modes = set(available_modes())
-    assert "news" in modes
     assert "curious" in modes
+    assert "news" not in modes
 
 
 def test_get_prompt_config_returns_template():
-    template = get_prompt_config("news")
-    assert "News model" in template.system
+    template = get_prompt_config("curious")
+    assert "Curious storyteller" in template.system
 
 
 def test_get_prompt_config_invalid_mode_raises():
@@ -37,10 +43,9 @@ def test_render_prompt_renders_user_template():
 def test_render_prompt_disallows_invalid_category():
     with pytest.raises(InvalidCategoryError):
         render_prompt(
-            "news",
-            category="Art",
+            "curious",
+            category="InvalidCategory",
             language="en-IN",
             analysis="Some analysis",
             keywords=[],
         )
-

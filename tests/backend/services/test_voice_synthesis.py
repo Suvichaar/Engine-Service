@@ -64,10 +64,12 @@ def test_voice_service_uses_provider_and_storage():
 
     assets = service.synthesize(make_deck(), make_language(), provider="stub")
 
-    assert len(assets) == 1
-    assert provider.calls[0][0].startswith("Slide 1")
+    # 2 slides in deck = 2 voice assets
+    assert len(assets) == 2
+    assert provider.calls[0][0] == "Welcome to the revolution."
+    assert provider.calls[1][0] == "This slide explores the impacts."
     assert storage.calls[0].audio_bytes == b"bytes"
-    assert str(assets[0].audio_url).startswith("https://cdn.example.com/")
+    assert all(str(a.audio_url).startswith("https://cdn.example.com/") for a in assets)
 
 
 def test_voice_service_returns_empty_when_no_provider_found():
@@ -85,8 +87,8 @@ def test_elevenlabs_and_azure_clients_generate_bytes():
     azure = AzureTTSClient(api_key="key", region="eastus", voice="en-US-Aria")
 
     res1 = elevenlabs.synthesize("Hello world", language="en-US")
+    # Azure client handles escaping internally, but for the stub test we check output
     res2 = azure.synthesize("Hello world", language="en-US")
 
     assert res1.audio_bytes.startswith(b"ELEVENLABS")
     assert res2.audio_bytes.startswith(b"AZURE")
-

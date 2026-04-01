@@ -105,8 +105,12 @@ def test_user_upload_provider_converts_attachments():
     payload = make_payload("custom", attachments=["s3://bucket/image1.png"])
     contents = provider.generate(make_deck(), payload)
 
-    assert len(contents) == 1
-    assert contents[0].filename == "image1.png"
+    # 2 slides in deck + 1 CTA slide for Curious mode = 3 images
+    assert len(contents) == 3
+    assert contents[0].placeholder_id == "title"
+    assert contents[1].placeholder_id == "body"
+    assert contents[2].placeholder_id == "cta-slide"
+    assert all(c.filename == "image1.png" for c in contents)
 
 
 def test_s3_storage_service_generates_cloudfront_urls():
@@ -125,4 +129,3 @@ def test_s3_storage_service_generates_cloudfront_urls():
     assert asset.original_object_key.startswith("media/")
     assert len(asset.resized_variants) == 2
     assert all(str(url).startswith("https://cdn.example.com") for url in asset.resized_variants)
-

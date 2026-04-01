@@ -17,8 +17,6 @@ from app.services.image_prompts import (
     generate_content_related_safe_prompt,
     generate_cta_prompt,
     generate_curious_slide_prompt,
-    generate_news_slide_prompt,
-    generate_safe_news_prompt,
     sanitize_prompt,
     sanitize_revised_prompt,
 )
@@ -163,7 +161,7 @@ class AIImageProvider:
         self._language_model = language_model  # For automatic alt_text generation
 
     def supports(self, payload: IntakePayload) -> bool:
-        result = payload.image_source == "ai"
+        result = payload.image_source in ["ai", "ai_image"]
         logger = logging.getLogger(__name__)
         logger.info(f"🔍 AIImageProvider.supports() - image_source: {payload.image_source}, result: {result}")
         return result
@@ -186,15 +184,11 @@ class AIImageProvider:
     def _sanitize_prompt(self, text: str) -> str:
         """Sanitize prompt by extracting only positive keywords and concepts."""
         logger = logging.getLogger(__name__)
-        result = sanitize_prompt(text, fallback_fn=lambda: generate_safe_news_prompt())
+        result = sanitize_prompt(text)
         if extract_positive_keywords(text):
             logger.info(f"Extracted positive keywords: {extract_positive_keywords(text)}")
         return result
     
-    def _generate_safe_news_prompt(self, topic: str = None, slide_index: int = None) -> str:
-        """Generate a very simple, safe, positive news-related image prompt."""
-        return generate_safe_news_prompt(topic, slide_index)
-
     def _generate_content_related_safe_prompt(self, topic: str = None, original_prompt: str = None, simpler: bool = False) -> str:
         """Generate a safe, positive prompt that's still related to the original content."""
         return generate_content_related_safe_prompt(topic, original_prompt, simpler)
@@ -234,7 +228,7 @@ Generate concise, descriptive alt text (image prompts) that are:
 
 IMPORTANT: The image prompt must be in English only, even if the slide content is in another language."""
                 
-                mode_context = "educational story" if payload.mode.value == "curious" else "news story"
+                mode_context = "educational story"
                 category_context = f"Category: {payload.category}" if payload.category else ""
                 
                 user_prompt = f"""Generate a descriptive image prompt (alt text) in ENGLISH ONLY for this slide content.
@@ -315,293 +309,126 @@ Return only the English description that captures the visual essence, no quotes 
 
     def generate(self, deck: SlideDeck, payload: IntakePayload) -> Sequence[ImageContent]:
         contents: list[ImageContent] = []
-        prompt_keywords = ", ".join(payload.prompt_keywords) or "story"
+        prompt_keywords = ", ".join(payload.prompt_keywords) if payload.prompt_keywords else "story"
+        user_provided_keywords = payload.prompt_keywords and len(payload.prompt_keywords) > 0
         
-        # For News mode with custom cover, generate images based on slide_count
-        # slide_count = cover (1) + middle slides + CTA (1)
-        # So we need images for: cover (1) + middle slides + CTA (slide_count - 1 total slides after cover)
+        # For Curious mode, extract alt text from narrative JSON in payload metadata
+        alt_texts = {}
         logger = logging.getLogger(__name__)
-        if payload.mode.value == "news" and payload.slide_count:
-            logger.info("🎨 Generating AI images for News mode: slide_count=%d, deck_slides=%d", 
-                       payload.slide_count, len(deck.slides))
+        if payload.mode == Mode.CURIOUS:
+            logger.debug(f"Curious mode: metadata exists={bool(payload.metadata)}, image_source={payload.image_source}")
+            if payload.metadata:
+                narrative_json = payload.metadata.get("narrative_json")
+                logger.debug(f"Narrative JSON exists: {bool(narrative_json)}, type: {type(narrative_json)}")
+                if narrative_json and isinstance(narrative_json, dict):
+                    # Extract alt texts: s0alt1 (cover), s1alt1, s2alt1, etc.
+                    for i in range(len(deck.slides)):
+                        alt_key = "s0alt1" if i == 0 else f"s{i}alt1"
+                        if alt_key in narrative_json and narrative_json[alt_key]:
+                            alt_texts[i] = narrative_json[alt_key]
+                            logger.debug(f"Extracted alt text for slide {i} ({alt_key}): {narrative_json[alt_key][:80]}...")
+                    
+                    # Extract CTA alt text specifically
+                    if "ctaalt1" in narrative_json and narrative_json["ctaalt1"]:
+                        alt_texts["cta"] = narrative_json["ctaalt1"]
+                        logger.debug(f"Extracted alt text for CTA slide: {alt_texts['cta'][:80]}...")
+                    
+                    logger.info(f"Extracted {len(alt_texts)} alt texts for {len(deck.slides)} slides + CTA")
             
-            import time
-            last_successful_image = None  # Track last successful image for fallback
+            # If alt_texts not found, generate them automatically IF no user keywords provided
+            if not alt_texts and self._language_model and not user_provided_keywords:
+                logger.info("🔄 Alt texts not found in narrative_json, generating automatically from slide content...")
+                alt_texts = self._generate_alt_texts_for_slides(deck.slides, payload)
+        
+        # Calculate total slides needed (deck slides + 1 CTA slide for Curious mode)
+        total_slides_needed = len(deck.slides) + (1 if payload.mode == Mode.CURIOUS else 0)
+        logger.info(f"🔄 Generating images for {len(deck.slides)} slides {'+ 1 CTA' if payload.mode == Mode.CURIOUS else ''} ({total_slides_needed} total)")
+        
+        import time
+        last_successful_image = None
+        
+        # 1. Generate images for all deck slides
+        for idx, slide in enumerate(deck.slides):
+            if slide.image_url:
+                continue
             
-            # Generate images for ALL slides including cover (0) and CTA (last)
-            # Loop through all slides from 0 to slide_count-1
-            max_idx = min(payload.slide_count, len(deck.slides))
-            logger.info("🔄 Generating images for all slides 0 to %d (including cover and CTA)", max_idx - 1)
+            # Rate limit protection (8s delay except for first slide)
+            if idx > 0:
+                time.sleep(8.0)
             
-            for idx in range(max_idx):
-                slide = deck.slides[idx]
-                if slide.image_url:
-                    logger.debug("⏭️ Skipping slide %d (already has image_url)", idx)
-                    continue
-                
-                # Add delay between requests (except first)
-                # Reduced delays slightly but kept enough for rate limiting
-                if idx > 0:
-                    if idx == 1:
-                        delay = 3.0  # Delay after cover (reduced from 5.0)
-                    else:
-                        delay = 6.0  # Delay between subsequent requests (reduced from 8.0)
-                    logger.info("⏳ Waiting %.1f seconds before generating image for slide %d...", delay, idx)
-                    time.sleep(delay)
-                
-                # Create prompt using prompts module
-                slide_text = (slide.text or 'Visual concept')[:200]
-                is_cover = (idx == 0)
-                is_cta = (idx == max_idx - 1)
-                
-                # Get article content from payload metadata if available (for News mode)
-                article_content = None
-                if payload.metadata and "article_content" in payload.metadata:
-                    article_content = payload.metadata["article_content"]
-                    logger.info(f"📰 Using article content for slide {idx} image generation ({len(article_content)} chars)")
-                
-                prompt = generate_news_slide_prompt(
-                    slide_text, 
-                    idx, 
-                    is_cover=is_cover, 
-                    is_cta=is_cta,
-                    article_content=article_content
-                )
-                
-                try:
-                    image_content = self._generate_image(slide.placeholder_id, prompt)
-                    contents.append(image_content)
-                    last_successful_image = image_content
-                    logger.info("✅ Generated image for slide %d (index %d)", idx + 1, idx)
-                except Exception as exc:
-                    logger.warning("❌ AI image generation failed for slide %d (index %d): %s", idx + 1, idx, exc)
-                    # ALWAYS try to generate a unique fallback image first
-                    # Only use last_successful_image if fallback generation also fails
-                    logger.info("🔄 Generating unique safe fallback image for slide %d (index %d)", idx + 1, idx)
-                    try:
-                        # Use content-related fallback that still uses article content for theme relevance
-                        # This ensures fallback images are still related to the article theme
-                        # and negative content is converted to positive (via generate_news_slide_prompt)
-                        if article_content:
-                            # Use shorter article snippet for fallback (400 chars) to keep it simple
-                            # generate_news_slide_prompt will handle negative-to-positive conversion
-                            fallback_article_snippet = article_content[:400]
-                            safe_prompt = generate_news_slide_prompt(
-                                slide_text,
-                                idx,
-                                is_cover=is_cover,
-                                is_cta=is_cta,
-                                article_content=fallback_article_snippet  # Shorter snippet for fallback
-                            )
-                            logger.info(f"🔄 Using article content in fallback for slide {idx} (theme-based)")
-                        else:
-                            # Fallback to simple safe prompt if no article content
-                            safe_prompt = self._generate_safe_news_prompt(slide_text, slide_index=idx)
-                            logger.info(f"🔄 Using generic safe prompt for slide {idx} (no article content)")
-                        
-                        fallback_content = self._generate_image(slide.placeholder_id, safe_prompt)
-                        contents.append(fallback_content)
-                        last_successful_image = fallback_content
-                        logger.info("✅ Generated unique fallback image for slide %d", idx + 1)
-                    except Exception as fallback_exc:
-                        logger.warning("❌ Unique fallback generation failed for slide %d: %s", idx + 1, fallback_exc)
-                        # Only now use last successful image as last resort
-                        if last_successful_image:
-                            logger.info("🔄 Using last successful image as final fallback for slide %d", idx + 1)
-                            from copy import deepcopy
-                            fallback_content = deepcopy(last_successful_image)
-                            fallback_content.placeholder_id = slide.placeholder_id
-                            contents.append(fallback_content)
-                        else:
-                            # Last resort: skip this slide (don't append empty bytes that can break storage)
-                            logger.error("❌ All fallback options exhausted for slide %d; skipping image", idx + 1)
+            # PROMPT PRIORITY:
+            # 1. Alt-text from metadata/auto-gen (if available)
+            # 2. User-provided keywords + Slide text
+            # 3. Slide text alone
             
-            logger.info("📊 Total images generated: %d (expected: %d)", len(contents), payload.slide_count)
-        else:
-            # For Curious mode, extract alt text from narrative JSON in payload metadata
-            # For other modes, use slide text
-            alt_texts = {}
-            logger = logging.getLogger(__name__)
-            if payload.mode.value == "curious":
-                logger.debug(f"Curious mode: metadata exists={bool(payload.metadata)}, image_source={payload.image_source}")
-                if payload.metadata:
-                    narrative_json = payload.metadata.get("narrative_json")
-                    logger.debug(f"Narrative JSON exists: {bool(narrative_json)}, type: {type(narrative_json)}")
-                    if narrative_json and isinstance(narrative_json, dict):
-                        logger.debug(f"Narrative JSON keys: {list(narrative_json.keys())[:20]}")
-                        # Extract alt texts: s0alt1 (cover), s1alt1, s2alt1, etc.
-                        # Map: slide index 0 → s0alt1 (cover), slide index 1 → s1alt1, etc.
-                        for i in range(len(deck.slides)):
-                            if i == 0:
-                                # Cover slide uses s0alt1
-                                alt_key = "s0alt1"
-                            else:
-                                # Middle slides use s1alt1, s2alt1, etc. (note: slide index 1 → s1alt1)
-                                alt_key = f"s{i}alt1"
-                            if alt_key in narrative_json and narrative_json[alt_key]:
-                                alt_texts[i] = narrative_json[alt_key]
-                                logger.debug(f"Extracted alt text for slide {i} ({alt_key}): {narrative_json[alt_key][:80]}...")
-                            else:
-                                logger.debug(f"Alt text not found for slide {i} (key: {alt_key})")
-                        logger.info(f"Extracted {len(alt_texts)} alt texts for {len(deck.slides)} slides")
-                    else:
-                        logger.warning("Narrative JSON is not a dict or is None")
+            prompt = ""
+            if idx in alt_texts:
+                prompt = alt_texts[idx]
+                logger.info(f"📝 Using pre-extracted alt-text for slide {idx}: {prompt[:100]}...")
+            elif user_provided_keywords:
+                # User keywords + slide text (translated if needed)
+                english_desc = self._convert_to_english_fallback(slide.text or 'Learning', payload)
+                from app.services.image_prompts import generate_curious_slide_prompt
+                base_prompt = generate_curious_slide_prompt(english_desc, is_cover=(idx == 0))
+                prompt = f"{base_prompt} | keywords: {prompt_keywords}"
+                logger.info(f"📝 Using user keywords for slide {idx}: {prompt_keywords}")
+            else:
+                # Fallback to slide text (translated if needed)
+                prompt = self._convert_to_english_fallback(slide.text or 'Visual concept', payload)
+                if not prompt or prompt == "Visual concept":
+                    from app.services.image_prompts import generate_curious_slide_prompt
+                    prompt = generate_curious_slide_prompt('Education', is_cover=(idx == 0))
+                logger.info(f"📝 Using slide text fallback for slide {idx}: {prompt[:100]}...")
+
+            try:
+                logger.debug(f"🖼️ Requesting image for slide {idx} with prompt: {prompt[:150]}...")
+                image_content = self._generate_image(slide.placeholder_id, prompt)
+                contents.append(image_content)
+                last_successful_image = image_content
+            except Exception as exc:
+                logger.error(f"❌ Image generation failed for slide {idx}: {exc}")
+                if last_successful_image:
+                    logger.info(f"🔄 Using last successful image fallback for slide {idx}")
+                    from copy import deepcopy
+                    fallback = deepcopy(last_successful_image)
+                    fallback.placeholder_id = slide.placeholder_id
+                    contents.append(fallback)
                 else:
-                    logger.warning("Payload metadata is empty or None for Curious mode")
+                    # Generic safe fallback or skip
+                    logger.warning(f"⚠️ No fallback image available for slide {idx}; skipping image")
+
+        # 2. Generate image for CTA slide (Curious mode only)
+        if payload.mode == Mode.CURIOUS:
+            # Cooldown delay
+            time.sleep(8.0)
+            cta_placeholder_id = "cta-slide"
             
-            # If alt_texts not found (for both News and Curious modes), generate them automatically
-            # BUT: Only if user hasn't provided prompt_keywords (user input takes priority)
-            if not alt_texts and self._language_model:
-                # Check if user provided prompt_keywords - if yes, we'll use them in prompts instead
-                user_provided_keywords = payload.prompt_keywords and len(payload.prompt_keywords) > 0
-                if not user_provided_keywords:
-                    logger.info("🔄 Alt texts not found in narrative_json and no user keywords provided, generating automatically from slide content...")
-                    alt_texts = self._generate_alt_texts_for_slides(deck.slides, payload)
-                else:
-                    logger.info("📝 User provided prompt_keywords, will use them in prompts instead of auto-generated alt_texts")
+            # CTA Prompt Priority:
+            # 1. Alt-text 'cta' from metadata
+            # 2. User Keywords
+            # 3. Generic Curious CTA prompt
+            prompt = ""
+            if "cta" in alt_texts:
+                prompt = alt_texts["cta"]
+                logger.info(f"📝 Using pre-extracted alt-text for CTA slide: {prompt[:100]}...")
+            elif user_provided_keywords:
+                prompt = f"Educational concept of growth and learning | keywords: {prompt_keywords}"
+            else:
+                from app.services.image_prompts import generate_curious_slide_prompt
+                prompt = generate_curious_slide_prompt("Universal learning and growth", is_cover=False)
             
-            # Generate images for all slides in the deck (including cover and CTA)
-            import time
-            last_successful_image = None  # Track for fallback
-            
-            # Calculate total slides needed (deck slides + CTA if in Curious mode)
-            total_slides_needed = len(deck.slides)
-            if payload.mode.value == "curious":
-                # In Curious mode, CTA slide is not in deck.slides, so we need to generate it separately
-                # Total = deck.slides (cover + middle) + 1 CTA
-                total_slides_needed = len(deck.slides) + 1
-                logger.info(f"🔄 Curious mode: Generating images for {len(deck.slides)} deck slides + 1 CTA slide = {total_slides_needed} total")
-            
-            for idx, slide in enumerate(deck.slides):
-                if slide.image_url:
-                    continue
-                
-                # Add cooldown delay between requests (except first)
-                if idx > 0:
-                    delay = 8.0
-                    logger.info(f"⏳ Waiting {delay:.1f} seconds before generating image for slide {idx} (rate limit protection)...")
-                    time.sleep(delay)
-                
-                # Priority order:
-                # 1. User-provided prompt_keywords (if available) - user input takes priority
-                # 2. Auto-generated alt_texts (if available)
-                # 3. Fallback to slide.text + prompt_keywords
-                
-                user_provided_keywords = payload.prompt_keywords and len(payload.prompt_keywords) > 0
-                
-                if user_provided_keywords:
-                    # User provided keywords - use them in prompt (user preference)
-                    if payload.mode.value == "curious":
-                        # Convert non-English slide text to English first, then add keywords
-                        english_desc = self._convert_to_english_fallback(slide.text or 'Learning', payload)
-                        if english_desc == "Visual concept" or not english_desc or len(english_desc) < 10:
-                            base_prompt = generate_curious_slide_prompt('Learning', is_cover=(idx == 0))
-                        else:
-                            base_prompt = f"{english_desc} — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette; inclusive, family-friendly; no text/logos/watermarks; no real-person likeness."
-                        prompt = f"{base_prompt} | keywords: {prompt_keywords}"
-                    else:
-                        # For News mode, use slide text with user keywords
-                        prompt = f"{slide.text or 'Visual concept'} | keywords: {prompt_keywords}"
-                    logger.info(f"📝 Using user-provided keywords for slide {idx} ({slide.placeholder_id}): {prompt_keywords}")
-                elif idx in alt_texts and alt_texts[idx]:
-                    # Auto-generated alt_texts available - use them
-                    prompt = alt_texts[idx]
-                    logger.info(f"✅ Using auto-generated alt text for slide {idx} ({slide.placeholder_id}): {prompt[:100]}...")
-                else:
-                    # Fallback: convert non-English content to English description for image prompt
-                    fallback_text = slide.text or 'Learning'
-                    if payload.mode.value == "curious":
-                        # For Curious mode, convert non-English slide text to English description
-                        prompt = self._convert_to_english_fallback(fallback_text, payload)
-                        if prompt == "Visual concept" or not prompt:
-                            # If conversion failed, use generic safe prompt
-                            prompt = generate_curious_slide_prompt('Learning', is_cover=(idx == 0))
-                    else:
-                        # For News mode, use slide text only (no keywords if not provided)
-                        prompt = f"{fallback_text or 'Visual concept'}"
-                    logger.warning(f"⚠️ Alt text not found for slide {idx} ({slide.placeholder_id}), using converted fallback prompt")
-                
-                try:
-                    logger.debug(f"🖼️ Generating image for slide {idx} with prompt: {prompt[:150]}...")
-                    image_content = self._generate_image(slide.placeholder_id, prompt)
-                    contents.append(image_content)
-                    last_successful_image = image_content
-                    logger.info(f"✅ Successfully generated image for slide {idx} ({slide.placeholder_id})")
-                except Exception as exc:
-                    logger.error(f"❌ AI image generation failed for slide {idx} ({slide.placeholder_id}): {exc}", exc_info=True)
-                    # ALWAYS provide fallback
-                    if last_successful_image:
-                        logger.info(f"🔄 Using last successful image as fallback for slide {idx}")
-                        from copy import deepcopy
-                        fallback_content = deepcopy(last_successful_image)
-                        fallback_content.placeholder_id = slide.placeholder_id
-                        contents.append(fallback_content)
-                    else:
-                        # Generate safe fallback with unique prompt for this slide
-                        logger.info(f"🔄 Generating unique safe fallback image for slide {idx}")
-                        try:
-                            # Use slide index to ensure unique prompt
-                            safe_prompt = self._generate_safe_news_prompt(slide.text, slide_index=idx)
-                            fallback_content = self._generate_image(slide.placeholder_id, safe_prompt)
-                            contents.append(fallback_content)
-                            last_successful_image = fallback_content
-                            logger.info(f"✅ Generated unique fallback image for slide {idx}")
-                        except Exception as fallback_exc:
-                            logger.warning(f"❌ Unique fallback generation failed for slide {idx}: {fallback_exc}")
-                            # Only use last successful if available
-                            if last_successful_image:
-                                logger.info(f"🔄 Using last successful image as final fallback for slide {idx}")
-                                from copy import deepcopy
-                                fallback_content = deepcopy(last_successful_image)
-                                fallback_content.placeholder_id = slide.placeholder_id
-                                contents.append(fallback_content)
-                            else:
-                                # Last resort: skip (don't append empty bytes that can break storage)
-                                logger.error(f"❌ All fallback options exhausted for slide {idx}; skipping image")
-            
-            # For Curious mode, generate CTA slide image separately (CTA is not in deck.slides)
-            if payload.mode.value == "curious":
-                cta_placeholder_id = "cta-slide"  # Match the template's CTA slide ID
-                logger.info(f"🎯 Generating CTA slide image for Curious mode (placeholder: {cta_placeholder_id})")
-                
-                # Add delay before CTA image generation
-                delay = 8.0
-                logger.info(f"⏳ Waiting {delay:.1f} seconds before generating CTA image (rate limit protection)...")
-                time.sleep(delay)
-                
-                # Generate CTA-specific prompt using prompts module
-                cta_prompt = generate_cta_prompt(mode=payload.mode.value)
-                
-                try:
-                    logger.debug(f"🖼️ Generating CTA image with prompt: {cta_prompt[:150]}...")
-                    cta_image_content = self._generate_image(cta_placeholder_id, cta_prompt)
-                    contents.append(cta_image_content)
-                    last_successful_image = cta_image_content
-                    logger.info(f"✅ Successfully generated CTA slide image ({cta_placeholder_id})")
-                except Exception as cta_exc:
-                    logger.error(f"❌ AI image generation failed for CTA slide ({cta_placeholder_id}): {cta_exc}", exc_info=True)
-                    # Use last successful image as fallback for CTA
-                    if last_successful_image:
-                        logger.info(f"🔄 Using last successful image as fallback for CTA slide")
-                        from copy import deepcopy
-                        cta_fallback_content = deepcopy(last_successful_image)
-                        cta_fallback_content.placeholder_id = cta_placeholder_id
-                        contents.append(cta_fallback_content)
-                    else:
-                        # Generate safe fallback for CTA
-                        logger.info(f"🔄 Generating unique safe fallback image for CTA slide")
-                        try:
-                            # Use a high index to ensure unique prompt
-                            safe_cta_prompt = self._generate_safe_news_prompt("call to action learning", slide_index=len(deck.slides))
-                            cta_fallback_content = self._generate_image(cta_placeholder_id, safe_cta_prompt)
-                            contents.append(cta_fallback_content)
-                            logger.info(f"✅ Generated unique fallback image for CTA slide")
-                        except Exception as cta_fallback_exc:
-                            logger.error(f"❌ CTA fallback generation also failed: {cta_fallback_exc}")
-                            # Last resort: skip (template will fall back to default image)
-                            logger.error("❌ CTA fallback exhausted; skipping CTA image")
-            
-            logger.info(f"📊 Total images generated: {len(contents)} (expected: {total_slides_needed} for {payload.mode.value} mode)")
+            try:
+                logger.info(f"🖼️ Generating CTA image with prompt: {prompt[:150]}...")
+                cta_image = self._generate_image(cta_placeholder_id, prompt)
+                contents.append(cta_image)
+            except Exception as cta_exc:
+                logger.error(f"❌ CTA image generation failed: {cta_exc}")
+                if last_successful_image:
+                    from copy import deepcopy
+                    cta_fallback = deepcopy(last_successful_image)
+                    cta_fallback.placeholder_id = cta_placeholder_id
+                    contents.append(cta_fallback)
+        
         return contents
 
     def _generate_image(self, placeholder_id: str, prompt: str, retry_count: int = 3) -> ImageContent:
@@ -619,11 +446,30 @@ Return only the English description that captures the visual essence, no quotes 
             logger.warning("Prompt too long (%d chars), truncating to %d chars", len(prompt), max_prompt_length)
             prompt = prompt[:max_prompt_length]
         
+        is_flux = "flux-2-pro" in self._endpoint.lower()
+        
         headers = {
-            "api-key": self._api_key,
             "Content-Type": "application/json",
         }
-        body = {"prompt": prompt, "size": "1024x1024"}
+        
+        if is_flux:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+            body = {
+                "prompt": prompt,
+                "width": 1024,
+                "height": 1024,
+                "n": 1,
+                "model": "FLUX.2-pro"
+            }
+        else:
+            headers["api-key"] = self._api_key
+            body = {
+                "prompt": prompt,
+                "n": 1,
+                "size": "1024x1024",
+                "model": "dall-e-3",
+            }
+        
         
         last_exception = None
         for attempt in range(retry_count):
@@ -695,7 +541,7 @@ Return only the English description that captures the visual essence, no quotes 
                             if original_topic:
                                 body["prompt"] = f"professional illustration about {original_topic}, clean, modern, positive"
                             else:
-                                body["prompt"] = "professional news illustration, clean, modern, positive"
+                                body["prompt"] = "professional illustration, clean, modern, positive"
                     else:
                         # For other 400 errors, try with a simpler prompt
                         logger.warning("400 Bad Request on attempt %d/%d, trying simpler prompt", attempt + 1, retry_count)
@@ -719,9 +565,10 @@ Return only the English description that captures the visual essence, no quotes 
         if last_exception:
             raise last_exception
         
-        logger.debug(f"DALL-E API response keys: {list(data.keys())}")
+        logger.debug(f"AI API response keys: {list(data.keys())}")
         
-        images = data.get("data") or []
+        # Parse based on provider format: DALL-E uses 'data', Azure Flux uses 'images'
+        images = data.get("data") or data.get("images") or []
         if not images:
             logger.error(f"No image data in response. Full response: {data}")
             raise ValueError("No image data returned from AI provider.")
@@ -743,7 +590,7 @@ Return only the English description that captures the visual essence, no quotes 
                 raise ValueError("Missing base64 image payload or URL.")
             
             # Download image from URL
-            logger.info(f"Downloading image from URL: {image_url}")
+            logger.debug("Downloading image from URL...")
             with httpx.Client(timeout=30.0) as client:
                 img_response = client.get(image_url)
                 img_response.raise_for_status()
@@ -772,7 +619,7 @@ class PexelsImageProvider:
             self._load_pexel_tags()
 
     def supports(self, payload: IntakePayload) -> bool:
-        return payload.image_source == "pexels"
+        return payload.image_source in ["pexels", "pexels_image"]
 
     def _translate_to_english(self, text: str) -> Optional[str]:
         """Translate non-English text to English using Azure OpenAI.

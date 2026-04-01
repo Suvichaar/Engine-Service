@@ -6,12 +6,10 @@ from typing import Dict, Iterable, Mapping
 
 from .base import PromptTemplate
 from .curious import CURIOUS_TEMPLATE
-from .news import NEWS_TEMPLATE
 
 
 PROMPT_REGISTRY: Dict[str, PromptTemplate] = {
     "curious": CURIOUS_TEMPLATE,
-    "news": NEWS_TEMPLATE,
 }
 
 

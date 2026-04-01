@@ -32,7 +32,7 @@ class IntakePayload(BaseModel):
     template_key: constr(min_length=1) = Field(..., description="Chosen template identifier.")
     slide_count: SlideCount = Field(..., description="Total number of slides requested.")
     category: Optional[str] = Field(default=None, description="Category chosen by the user, if applicable.")
-    image_source: Optional[constr(pattern="^(ai|pexels|custom)$")] = Field(
+    image_source: Optional[constr(pattern="^(ai|ai_image|pexels|pexels_image|custom)$")] = Field(
         default=None, description="Preferred image pipeline source."
     )
     voice_engine: Optional[constr(pattern="^(elevenlabs_pro|azure_basic)$")] = Field(

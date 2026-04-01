@@ -17,11 +17,11 @@ def test_build_payload_normalizes_inputs():
         notes="Some notes",
         urls=["https://example.com/one", "https://example.com/two"],
         attachments=["file1.pdf", "file2.png"],
-        prompt_keywords=["news", "technology"],
-        mode="news",
+        prompt_keywords=["curious", "technology"],
+        mode="curious",
         template_key="modern_dark",
         slide_count="8",
-        category="News",
+        category="Science",
         image_source="pexels",
         voice_engine="elevenlabs_pro",
     )
@@ -29,8 +29,8 @@ def test_build_payload_normalizes_inputs():
     assert payload.text_prompt == "Tell me a story"
     assert payload.slide_count == 8
     assert payload.attachments == ["normalized:file1.pdf", "normalized:file2.png"]
-    assert payload.prompt_keywords == ["news", "technology"]
-    assert payload.mode == Mode.NEWS
+    assert payload.prompt_keywords == ["curious", "technology"]
+    assert payload.mode == Mode.CURIOUS
     assert payload.template_key == "modern_dark"
     assert payload.voice_engine == "elevenlabs_pro"
 

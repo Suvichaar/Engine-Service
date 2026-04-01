@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 
 from app.domain.dto import AnalysisReport, TopicCluster
-from app.services.prompt_templates import DefaultPromptTemplateService, PromptSelectionController, PromptSelectionError
+from app.services.prompt_templates import (
+    DefaultPromptTemplateService,
+    PromptSelectionController,
+    PromptSelectionError,
+)
 
 
 def test_list_templates_returns_modes():
@@ -12,7 +16,7 @@ def test_list_templates_returns_modes():
     templates = {info.mode: info for info in service.list_templates()}
 
     assert "curious" in templates
-    assert "news" in templates
+    assert "news" not in templates
     assert "{analysis}" in templates["curious"].user_template
 
 
@@ -20,16 +24,16 @@ def test_get_prompt_renders_user_content():
     service = DefaultPromptTemplateService()
 
     prompt = service.get_prompt(
-        mode="news",
-        category="News",
+        mode="curious",
+        category="Education",
         language="en-IN",
-        analysis="Headline summary here.",
-        keywords=["economy", "policy"],
+        analysis="Scientific summary here.",
+        keywords=["physics", "research"],
     )
 
-    assert "Headline summary here." in prompt.user
-    assert "economy" in prompt.user
-    assert prompt.metadata["mode"] == "news"
+    assert "Scientific summary here." in prompt.user
+    assert "physics" in prompt.user
+    assert prompt.metadata["mode"] == "curious"
 
 
 def test_prompt_selection_controller_composes_analysis_text():
@@ -39,13 +43,17 @@ def test_prompt_selection_controller_composes_analysis_text():
     analysis = AnalysisReport(
         narrative_summary="AI adoption increases.",
         topic_clusters=[
-            TopicCluster(title="Adoption", keywords=["AI", "automation"], summary="Companies embracing AI."),
+            TopicCluster(
+                title="Adoption",
+                keywords=["AI", "automation"],
+                summary="Companies embracing AI.",
+            ),
         ],
     )
 
     prompt = controller.select_prompt(
         mode="curious",
-        category="Art",
+        category="Education",
         language="en-IN",
         analysis=analysis,
         keywords=["innovation"],
@@ -64,10 +72,9 @@ def test_prompt_selection_invalid_category_raises():
 
     with pytest.raises(PromptSelectionError):
         controller.select_prompt(
-            mode="news",
-            category="Art",
+            mode="curious",
+            category="InvalidCategory",
             language="en-IN",
             analysis=analysis,
             keywords=[],
         )
-

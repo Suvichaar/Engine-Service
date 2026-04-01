@@ -100,11 +100,11 @@ class DatabaseSettings(BaseModel):
 
 
 class AppSettings(BaseModel):
-    azure_api: AzureAPISettings
+    azure_api: AzureAPISettings | None = None
     dalle: DalleSettings = DalleSettings()  # Optional with defaults - ai_image is preferred
-    azure_speech: AzureSpeechSettings
-    azure_di: AzureDocumentIntelligenceSettings
-    aws: AWSSettings
+    azure_speech: AzureSpeechSettings | None = None
+    azure_di: AzureDocumentIntelligenceSettings | None = None
+    aws: AWSSettings | None = None
     ai_image: AIImageSettings | None = None
     pexels: PexelsSettings | None = None
     serper: SerperSettings | None = None
@@ -254,8 +254,8 @@ SECTION_MAPPING: Dict[str, Dict[str, str]] = {
         "DEFAULT_ERROR_IMAGE": "default_error_image",
     },
     "ai_image": {
-        "AI_IMAGE_ENDPOINT": "endpoint",
-        "AI_IMAGE_API_KEY": "api_key",
+        "FLUX_ENDPOINT": "endpoint",
+        "FLUX_API_KEY": "api_key",
     },
     "pexels": {
         "PEXELS_API_KEY": "api_key",

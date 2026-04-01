@@ -34,7 +34,7 @@ class StoryCreateRequest(BaseModel):
         json_schema_extra={
             "example": {
                 "mode": "curious",
-                "template_key": "curious_default",
+                "template_key": "curious-template-1",
                 "slide_count": 4,
                 "category": "History",
                 "user_input": "Explain the history of the Pyramids of Giza.",
@@ -60,7 +60,7 @@ class StoryResponse(StoryRecord):
                 "category": "History",
                 "input_language": "en",
                 "slide_count": 4,
-                "template_key": "curious_default",
+                "template_key": "curious-template-1",
                 "doc_insights": {
                     "semantic_chunks": [],
                     "metadata": {}

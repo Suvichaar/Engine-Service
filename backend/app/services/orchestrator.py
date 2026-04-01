@@ -88,8 +88,8 @@ class StoryOrchestrator:
             raise ValueError(f"Failed to aggregate job request: {e}") from e
         
         try:
-            # CRITICAL LAYER 1: Create mode-specific document pipeline with mode-specific URL extractor
-            # This ensures News and Curious modes have isolated caches
+            # CRITICAL LAYER 1: Create Curious mode-specific document pipeline with mode-specific URL extractor
+            # This ensures Curious mode has its own isolated cache
             from app.services.url_extractor import URLContentExtractor
             from app.services.document_intelligence import DefaultDocumentIntelligencePipeline
             from app.core import get_settings
@@ -252,8 +252,8 @@ class StoryOrchestrator:
 
         try:
             model_client = self.model_router.route(payload.mode)
-            # Pass slide_count and metadata to NewsModelClient if it's NEWS mode
-            if payload.mode == Mode.CURIOUS and hasattr(model_client, 'generate'):
+            # Narrative generation
+            if hasattr(model_client, 'generate'):
                 # For CuriousModelClient, pass slide_count if available
                 # Note: CuriousModelClient may not support slide_count yet, but we pass it for future compatibility
                 try:
@@ -326,7 +326,7 @@ class StoryOrchestrator:
         if doc_insights.metadata and "article_images" in doc_insights.metadata:
             article_images = doc_insights.metadata["article_images"]
 
-        # Extract article content from doc_insights for News mode image generation
+        # Extract article content from doc_insights for story generation
         # Combine all semantic chunks to get full article text
         article_content = None
         if doc_insights.semantic_chunks:
@@ -337,28 +337,17 @@ class StoryOrchestrator:
         
         
         try:
-            print(f"\n{'='*60}")
-            print(f"🖼️ ORCHESTRATOR: Starting image pipeline")
-            print(f"Mode: {payload.mode.value}, Image Source: {payload.image_source}, Slide Count: {payload.slide_count}")
-            print(f"{'='*60}\n")
-            logger.warning("🖼️ Starting image pipeline: mode=%s image_source=%s slide_count=%d", 
+            logger.info("🖼️ Starting image pipeline: mode=%s image_source=%s slide_count=%d", 
                           payload.mode.value, payload.image_source, payload.slide_count)
-            image_assets = self.image_pipeline.process(narrative.slide_deck, updated_payload, article_images=article_images)
-            print(f"✅ ORCHESTRATOR: Image assets processed: {len(image_assets)}\n")
-            logger.warning("🖼️ Image assets processed: %d", len(image_assets))
+            image_assets = self.image_pipeline.process(narrative.slide_deck, payload, article_images=article_images)
+            logger.info("🖼️ Image assets processed: %d", len(image_assets))
         except Exception as e:
-            print(f"\n❌ ORCHESTRATOR: Image pipeline failed: {e}\n")
-            import traceback
-            traceback.print_exc()
-            logger.warning("❌ Image pipeline failed (non-critical): %s", e, exc_info=True)
+            logger.warning("❌ Image pipeline failed (non-critical): %s", e, exc_info=False)
             image_assets = []  # Continue without images
         
         try:
             voice_provider = payload.voice_engine or self.default_voice_provider
-            logger.info("🔊 Voice synthesis requested:")
-            logger.info("  - payload.voice_engine: %s", payload.voice_engine)
-            logger.info("  - self.default_voice_provider: %s", self.default_voice_provider)
-            logger.info("  - Final voice_provider: %s", voice_provider)
+            logger.info("🔊 Voice synthesis requested: %s", voice_provider)
             
             if not voice_provider:
                 logger.error("❌ No voice provider available! voice_provider=%s, default=%s", 
@@ -379,7 +368,7 @@ class StoryOrchestrator:
         story_id = self.id_factory()
         created_at = datetime.utcnow()
         
-        # Get story title for URL generation (News and Curious modes use title-based URLs)
+        # Get story title for URL generation (Curious mode uses title-based URLs)
         story_title = None
         if payload.mode == Mode.CURIOUS and narrative.slide_deck.slides:
             story_title = narrative.slide_deck.slides[0].text or None
@@ -397,7 +386,7 @@ class StoryOrchestrator:
             slide_deck=narrative.slide_deck,
             image_assets=image_assets,
             voice_assets=voice_assets,
-                        prompt_curious=rendered_prompt.user if payload.mode == Mode.CURIOUS else None,
+                        prompt_curious=rendered_prompt.user,
             canurl=canurl,
             canurl1=canurl1,
             created_at=created_at,
@@ -433,8 +422,8 @@ class StoryOrchestrator:
                 logger = logging.getLogger(__name__)
                 logger.info("HTML saved to: %s", html_file_path)
                 
-                # For News and Curious modes, upload HTML to S3 bucket "suvichaarstories" with slug-based filename
-                if payload.mode == Mode.CURIOUS and record.canurl1:
+                # For Curious mode, upload HTML to S3 bucket "suvichaarstories" with slug-based filename
+                if record.canurl1:
                     try:
                         # Extract slug filename from canurl1: https://suvichaar.org/stories/slug_nano.html -> slug_nano.html
                         canurl1_str = str(record.canurl1)
@@ -548,7 +537,7 @@ class StoryOrchestrator:
         """
         Build canonical URLs for the story.
         
-        For News and Curious modes: Uses title-based slug + date/time UUID format
+        For Curious mode: Uses title-based slug + date/time UUID format
         Matching JavaScript createSlugWithUUID function:
         - Slug from title (lowercase, hyphens, alphanumeric only)
         - UUID from date/time: ddmmyyhhminssms (14 digits)
@@ -558,8 +547,8 @@ class StoryOrchestrator:
         
         Args:
             story_id: UUID of the story
-            story_title: Story title (used for News mode slug generation)
-            mode: Story mode (News or Curious)
+            story_title: Story title (used for slug generation)
+            mode: Story mode (Curious)
         
         Returns:
             Tuple of (canurl, canurl1)
@@ -568,7 +557,7 @@ class StoryOrchestrator:
         """
         logger = logging.getLogger(__name__)
         
-        # For News and Curious modes, ALWAYS use title-based slug + date/time UUID format
+        # For Curious mode, ALWAYS use title-based slug + date/time UUID format
         if mode == Mode.CURIOUS:
             try:
                 # Step 1: Generate slug from title

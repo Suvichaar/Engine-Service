@@ -36,7 +36,7 @@ class URLContentExtractor:
 
     def __init__(self, logger: Optional[logging.Logger] = None, mode: Optional[str] = None, api_key: Optional[str] = None):
         self._logger = logger or logging.getLogger(__name__)
-        self._mode = mode  # mode-specific isolation
+        self._mode = mode  # mode storage for tracking
         self._serper_api_key = api_key or os.getenv("SERPER_API_KEY")
 
         if not self._serper_api_key:
@@ -123,7 +123,7 @@ class URLContentExtractor:
             parsed = urlparse(url)
             path_parts = parsed.path.split('/')
             url_keywords = []
-            skip_words = {'article', 'news', 'story', 'com', 'org', 'www', 'http', 'https', 'indianexpress', 
+            skip_words = {'article', 'story', 'com', 'org', 'www', 'http', 'https', 'indianexpress', 
                          'sports', 'cities', 'entertainment', 'technology', 'business', 'politics', 'world', 
                          'local', 'health', 'science', 'education', 'lifestyle', 'opinion', 'editorial', 'html'}
             

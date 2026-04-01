@@ -59,8 +59,7 @@ SLIDE_VARIATIONS = [
 POSITIVE_KEYWORDS = [
     "technology", "innovation", "development", "progress", "growth", "success", 
     "achievement", "discovery", "research", "science", "education", "learning", 
-    "knowledge", "information", "news", "media", "journalism", "reporting", 
-    "story", "article", "update", "announcement", "event", "meeting", 
+    "knowledge", "information", "story", "article", "update", "announcement", "event", "meeting", 
     "conference", "launch", "release", "product", "service", "business", 
     "economy", "market", "trade", "investment", "finance", "health", 
     "wellness", "sports", "entertainment", "culture", "art", "music", 
@@ -74,7 +73,7 @@ POSITIVE_KEYWORDS = [
 
 # Safe terms for content-related prompts
 SAFE_TERMS = [
-    "news", "story", "article", "report", "update", "information", 
+    "story", "article", "report", "update", "information", 
     "education", "learning", "knowledge", "science", "technology",
     "business", "economy", "sports", "culture", "art", "history",
     "health", "environment", "innovation", "development", "progress"
@@ -112,18 +111,17 @@ def extract_positive_keywords(text: str) -> list[str]:
     return unique_words
 
 
-def sanitize_prompt(text: str, fallback_fn=None) -> str:
+def sanitize_prompt(text: str) -> str:
     """Sanitize prompt by extracting only positive keywords and concepts.
     
     Args:
         text: Input text to sanitize
-        fallback_fn: Optional function to call if sanitization fails
         
     Returns:
         Sanitized prompt string
     """
     if not text:
-        return "professional news illustration"
+        return "professional illustration"
     
     # Extract positive keywords first
     positive_keywords = extract_positive_keywords(text)
@@ -138,21 +136,19 @@ def sanitize_prompt(text: str, fallback_fn=None) -> str:
     
     # If we have positive keywords, use them
     if positive_keywords:
-        safe_prompt = f"{', '.join(positive_keywords)}, professional news illustration, positive, informative, clean, modern"
+        safe_prompt = f"{', '.join(positive_keywords)}, professional illustration, positive, informative, clean, modern"
         return safe_prompt
     
     # If too much was removed or no positive keywords, use generic safe prompt
     if len(sanitized) < len(text) * 0.3 or not sanitized:
-        if fallback_fn:
-            return fallback_fn()
-        return generate_safe_news_prompt()
+        return generate_safe_prompt()
     
     # Use sanitized text with safe modifiers
-    return f"{sanitized[:100]}, professional news illustration, positive, informative, clean, modern"
+    return f"{sanitized[:100]}, professional illustration, positive, informative, clean, modern"
 
 
-def generate_safe_news_prompt(topic: Optional[str] = None, slide_index: Optional[int] = None) -> str:
-    """Generate a very simple, safe, positive news-related image prompt.
+def generate_safe_prompt(topic: Optional[str] = None, slide_index: Optional[int] = None) -> str:
+    """Generate a very simple, safe, positive image prompt.
     
     Args:
         topic: Optional topic to incorporate (will be sanitized)
@@ -218,79 +214,20 @@ def generate_content_related_safe_prompt(
         if safe_keywords:
             base = f"professional {safe_keywords[0]} themed illustration, clean, modern, uplifting"
         else:
-            base = "professional news themed illustration, clean, modern, uplifting"
+            base = "professional themed illustration, clean, modern, uplifting"
     else:
         # More detailed but safe
         if safe_keywords:
             base = f"professional {safe_keywords[0]} themed editorial illustration, informative, uplifting, clean design, modern aesthetic, warm colors"
         else:
-            base = "professional news themed editorial illustration, informative, uplifting, clean design, modern aesthetic"
+            base = "professional themed editorial illustration, informative, uplifting, clean design, modern aesthetic"
     
     # Add safe modifiers (keep positive phrasing; avoid 'no ...' patterns)
     modifiers = "family-friendly, calm, optimistic mood, professional quality, clean composition"
     return f"{base}, {modifiers}"
 
 
-def generate_news_slide_prompt(
-    slide_text: str, 
-    slide_index: int, 
-    is_cover: bool = False, 
-    is_cta: bool = False,
-    article_content: Optional[str] = None
-) -> str:
-    """Generate prompt for a news mode slide.
-    
-    Args:
-        slide_text: Text content of the slide
-        slide_index: Index of the slide (0-based)
-        is_cover: Whether this is the cover slide
-        is_cta: Whether this is the CTA slide
-        article_content: Optional full article content for better context
-        
-    Returns:
-        Formatted prompt string
-    """
-    # If article content is available, use it to generate content-related prompts
-    if article_content:
-        # Combine slide text with article content for better context
-        # Use first 800 chars of article + slide text to get good context while keeping processing fast
-        # This ensures we capture key concepts from the article without excessive processing time
-        article_snippet = article_content[:800] if len(article_content) > 800 else article_content
-        combined_content = f"{slide_text}. {article_snippet}"
-        
-        # Use editorial style prompt which extracts key concepts from article
-        # This ensures images are relevant to the actual article content
-        try:
-            prompt = generate_editorial_style_prompt(
-                input_text=combined_content,
-                topic_title=slide_text[:50] if slide_text else None,
-                content_type="news",
-            )
-            
-            # Add slide-specific modifiers
-            variation = SLIDE_VARIATIONS[slide_index % len(SLIDE_VARIATIONS)]
-            if is_cover:
-                return f"{prompt}, professional news cover illustration, {variation}"
-            elif is_cta:
-                return f"{prompt}, professional news CTA illustration, {variation}, call-to-action"
-            else:
-                return f"{prompt}, professional news illustration for slide {slide_index + 1}, {variation}"
-        except Exception:
-            # Fallback to simple prompt if editorial style fails
-            pass
-    
-    # Fallback: Use simple sanitized prompt (original behavior)
-    safe_text = sanitize_prompt(slide_text, fallback_fn=lambda: generate_safe_news_prompt())
-    
-    # Get slide-specific variation
-    variation = SLIDE_VARIATIONS[slide_index % len(SLIDE_VARIATIONS)]
-    
-    if is_cover:
-        return f"{safe_text}, professional news cover illustration, {variation}, positive, informative, clean, modern, unique design"
-    elif is_cta:
-        return f"{safe_text}, professional news CTA illustration, {variation}, positive, informative, clean, modern, call-to-action, unique design"
-    else:
-        return f"{safe_text}, professional news illustration for slide {slide_index + 1}, {variation}, positive, informative, clean, modern, unique design"
+
 
 
 def generate_curious_slide_prompt(slide_text: str, is_cover: bool = False) -> str:
@@ -309,19 +246,13 @@ def generate_curious_slide_prompt(slide_text: str, is_cover: bool = False) -> st
         return f"{slide_text or 'Visual concept'} — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette; inclusive, family-friendly; no text/logos/watermarks; no real-person likeness."
 
 
-def generate_cta_prompt(mode: str = "curious") -> str:
+def generate_cta_prompt() -> str:
     """Generate prompt for CTA slide.
     
-    Args:
-        mode: Story mode (curious or news)
-        
     Returns:
         CTA prompt string
     """
-    if mode == "curious":
-        return "Educational story call-to-action slide — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette, positive learning theme, inclusive, family-friendly; no text/logos/watermarks; no real-person likeness"
-    else:
-        return "Professional news call-to-action illustration, clean, modern, positive, informative, engaging"
+    return "Educational story call-to-action slide — flat vector illustration, clean geometric shapes, smooth gradients, harmonious palette, positive learning theme, inclusive, family-friendly; no text/logos/watermarks; no real-person likeness"
 
 
 def sanitize_revised_prompt(revised_prompt: str, max_length: int = 200) -> str:
@@ -457,7 +388,7 @@ def convert_negative_to_positive_imagery(text: str) -> str:
 def generate_editorial_style_prompt(
     input_text: str,
     topic_title: Optional[str] = None,
-    content_type: str = "general",  # "education", "news", "general", etc.
+    content_type: str = "curious",  # "curious", "general", etc.
     mood_adjectives: Optional[str] = None,
     color_palette: Optional[str] = None,
 ) -> str:
@@ -535,10 +466,8 @@ def generate_editorial_style_prompt(
     
     # Step 4: Auto-generate mood adjectives if not provided
     if not mood_adjectives:
-        if content_type == "education":
+        if content_type == "curious" or content_type == "education":
             mood_adjectives = "intellectual, clear, inspiring, scholarly, accessible"
-        elif content_type == "news":
-            mood_adjectives = "informative, professional, balanced, engaging, credible"
         else:
             mood_adjectives = "professional, clear, engaging, informative, positive"
     
@@ -574,7 +503,7 @@ def generate_sequential_topics_prompt(
     input_text: str,
     topic_number: int,
     total_topics: int = 8,
-    content_type: str = "general"
+    content_type: str = "curious"
 ) -> str:
     """Generate prompt for a specific sequential topic from input text.
     
