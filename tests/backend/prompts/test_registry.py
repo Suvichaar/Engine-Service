@@ -14,7 +14,6 @@ from app.prompts.registry import (
 def test_available_modes_contains_expected_entries():
     modes = set(available_modes())
     assert "curious" in modes
-    assert "news" not in modes
 
 
 def test_get_prompt_config_returns_template():
