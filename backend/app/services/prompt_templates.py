@@ -6,15 +6,15 @@ from typing import Iterable, Sequence
 
 from app.domain.dto import AnalysisReport, PromptTemplateInfo, RenderedPrompt
 from app.domain.interfaces import PromptTemplateService
-from app.prompts import get_prompt_config
-from app.prompts.registry import InvalidCategoryError, PromptNotFoundError, render_prompt
+from app.prompt_templates import get_text_prompt_config, render_text_prompt
+from app.prompt_templates.registry import InvalidCategoryError, PromptNotFoundError
 
 
 class DefaultPromptTemplateService(PromptTemplateService):
     """Serve prompt templates from the prompts registry."""
 
     def list_templates(self) -> Iterable[PromptTemplateInfo]:
-        config = get_prompt_config("news")
+        config = get_text_prompt_config("news")
         yield PromptTemplateInfo(
             mode="news",
             version=config.version,
@@ -34,7 +34,7 @@ class DefaultPromptTemplateService(PromptTemplateService):
         analysis: str,
         keywords: Iterable[str],
     ) -> RenderedPrompt:
-        result = render_prompt(
+        result = render_text_prompt(
             mode,
             category=category,
             language=language,

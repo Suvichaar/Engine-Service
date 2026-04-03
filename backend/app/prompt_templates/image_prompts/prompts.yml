@@ -1,0 +1,9 @@
+prompts:
+- key: alt_text_generation
+  version: v1
+  file: alt_text_generation.v1.prompt
+  active: true
+- key: english_fallback
+  version: v1
+  file: english_fallback.v1.prompt
+  active: true

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
@@ -102,3 +102,103 @@ class StoryCreateRequest(BaseModel):
 
 class StoryResponse(StoryRecord):
     model_config = ConfigDict(from_attributes=True)
+
+
+PromptGroup = Literal["text_prompts", "image_prompts"]
+
+
+class PromptVersionResponse(BaseModel):
+    group: PromptGroup
+    key: str
+    version: str
+    file_name: str
+    description: Optional[str] = None
+    status: Optional[str] = None
+    allowed_categories: List[str] = Field(default_factory=list)
+    required_placeholders: List[str] = Field(default_factory=list)
+    system: str
+    user_template: str
+    is_active: bool
+
+
+class PromptGroupResponse(BaseModel):
+    key: str
+    versions: List[PromptVersionResponse] = Field(default_factory=list)
+
+
+class PromptListingResponse(BaseModel):
+    text_prompts: List[PromptGroupResponse] = Field(default_factory=list)
+    image_prompts: List[PromptGroupResponse] = Field(default_factory=list)
+
+
+class PromptCreateRequest(BaseModel):
+    group: PromptGroup
+    key: str = Field(min_length=1, max_length=120)
+    version: str = Field(min_length=1, max_length=40)
+    description: Optional[str] = None
+    status: Optional[str] = None
+    allowed_categories: List[str] = Field(default_factory=list)
+    required_placeholders: List[str] = Field(default_factory=list)
+    system: str = Field(min_length=1)
+    user_template: str = Field(min_length=1)
+    active: bool = True
+
+
+class PromptUpdateRequest(BaseModel):
+    description: Optional[str] = None
+    status: Optional[str] = None
+    allowed_categories: List[str] = Field(default_factory=list)
+    required_placeholders: List[str] = Field(default_factory=list)
+    system: str = Field(min_length=1)
+    user_template: str = Field(min_length=1)
+    active: Optional[bool] = None
+
+
+class PromptActivateRequest(BaseModel):
+    group: PromptGroup
+    key: str = Field(min_length=1, max_length=120)
+    version: str = Field(min_length=1, max_length=40)
+
+
+class TemplateVersionResponse(BaseModel):
+    key: str
+    version: str
+    mode: str
+    file_name: str
+    file_path: str
+    slide_generator: str
+    description: Optional[str] = None
+    enabled: bool
+    is_active: bool
+    html_content: str
+
+
+class TemplateFamilyResponse(BaseModel):
+    key: str
+    versions: List[TemplateVersionResponse] = Field(default_factory=list)
+
+
+class TemplateListingResponse(BaseModel):
+    templates: List[TemplateFamilyResponse] = Field(default_factory=list)
+
+
+class TemplateCreateRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=120)
+    slide_generator: str = Field(min_length=1, max_length=120)
+    description: Optional[str] = None
+    enabled: bool = True
+    active: bool = True
+    html_content: str = Field(min_length=1)
+
+
+class TemplateUpdateRequest(BaseModel):
+    slide_generator: str = Field(min_length=1, max_length=120)
+    description: Optional[str] = None
+    enabled: bool = True
+    active: Optional[bool] = None
+    html_content: str = Field(min_length=1)
+
+
+class TemplateActivateRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=120)
+    version: str = Field(min_length=1, max_length=40)

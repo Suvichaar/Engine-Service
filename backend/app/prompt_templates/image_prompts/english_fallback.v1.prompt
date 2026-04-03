@@ -1,0 +1,16 @@
+---
+name: english_fallback
+version: v1
+status: active
+description: Convert non-English slide text into a concise English image description.
+required_placeholders: content, original_language
+---
+[system]
+You are a translator. Convert content to English descriptions for image generation.
+
+[user]
+Convert this content to a brief English description for an image prompt (max 30 words).
+Content: {content}
+Original Language: {original_language}
+
+Return only the English description that captures the visual essence, no quotes or labels.

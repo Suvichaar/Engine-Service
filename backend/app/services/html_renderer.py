@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import re
+from datetime import timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -348,10 +349,12 @@ class PlaceholderMapper:
         # URLs
         placeholders["canurl"] = str(record.canurl) if record.canurl else ""
         placeholders["canurl1"] = str(record.canurl1) if record.canurl1 else ""
-        # Timestamps - ISO 8601 format with Z suffix (e.g., "2025-01-21T10:30:00.000000Z")
-        iso_time = record.created_at.isoformat() + "Z"
+        # Keep ISO timestamps for metadata/structured data, but also provide a UI-friendly display value.
+        created_at_utc = record.created_at.astimezone(timezone.utc)
+        iso_time = created_at_utc.isoformat().replace("+00:00", "Z")
         placeholders["publishedtime"] = iso_time
         placeholders["modifiedtime"] = iso_time
+        placeholders["publisheddisplay"] = created_at_utc.strftime("%d %b %Y, %H:%M UTC")
         # Branding
         logo_base = self._site_logo_base
         placeholders["sitelogo32x32"] = f"{logo_base}/32x32/media/brandasset/suvichaariconblack.png"

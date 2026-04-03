@@ -95,7 +95,20 @@ from fastapi import Body, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.schemas import StoryCreateRequest, StoryResponse
+from app.api.schemas import (
+    PromptActivateRequest,
+    PromptCreateRequest,
+    PromptListingResponse,
+    PromptUpdateRequest,
+    PromptVersionResponse,
+    TemplateActivateRequest,
+    TemplateCreateRequest,
+    TemplateListingResponse,
+    TemplateUpdateRequest,
+    TemplateVersionResponse,
+    StoryCreateRequest,
+    StoryResponse,
+)
 from app.core import get_settings
 from app.domain.dto import AttachmentDescriptor, Mode
 from app.domain.interfaces import ModelClient, PromptTemplateService
@@ -122,6 +135,8 @@ from app.services.azure_openai_client import AzureOpenAILanguageModel
 from app.services.model_clients import LanguageModel, NewsModelClient
 from app.services.orchestrator import StoryOrchestrator
 from app.services.prompt_templates import DefaultPromptTemplateService, PromptSelectionController
+from app.services.prompt_management import PromptManagementError, PromptManagementService
+from app.services.template_management import TemplateManagementError, TemplateManagementService
 from app.services.template_registry import list_template_definitions
 from app.services.template_slide_generators import configure_template_generators
 from app.services.user_input import DefaultUserInputService
@@ -135,14 +150,19 @@ from app.services.html_renderer import HTMLTemplateRenderer
 from app.utils import is_placeholder_value
 
 
+def _parse_cors_allowed_origins(raw_value: Optional[str]) -> list[str]:
+    if not raw_value:
+        return ["http://localhost:3000", "http://127.0.0.1:3000"]
+    origins = [item.strip() for item in raw_value.split(",") if item.strip()]
+    return origins or ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+
+settings = get_settings()
 app = FastAPI(title="Engine Service News Backend")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=_parse_cors_allowed_origins(settings.fastapi.cors_allowed_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -195,6 +215,16 @@ class EchoLanguageModel(LanguageModel):
 @lru_cache(maxsize=1)
 def get_prompt_service() -> PromptTemplateService:
     return DefaultPromptTemplateService()
+
+
+@lru_cache(maxsize=1)
+def get_prompt_management_service() -> PromptManagementService:
+    return PromptManagementService()
+
+
+@lru_cache(maxsize=1)
+def get_template_management_service() -> TemplateManagementService:
+    return TemplateManagementService(mode=Mode.NEWS)
 
 
 @lru_cache(maxsize=1)
@@ -649,6 +679,133 @@ def get_story(story_id: str, orchestrator: StoryOrchestrator = Depends(get_orche
 @app.get("/templates", response_model=List[str])
 def list_templates():
     return sorted(definition.key for definition in list_template_definitions(Mode.NEWS))
+
+
+@app.get("/template-management", response_model=TemplateListingResponse)
+def list_template_management_templates(
+    template_service: TemplateManagementService = Depends(get_template_management_service),
+):
+    return TemplateListingResponse.model_validate(template_service.list_templates())
+
+
+@app.post("/template-management", response_model=TemplateVersionResponse)
+def create_template_version(
+    request: TemplateCreateRequest,
+    template_service: TemplateManagementService = Depends(get_template_management_service),
+):
+    try:
+        result = template_service.create_template(**request.model_dump())
+    except TemplateManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TemplateVersionResponse.model_validate(result)
+
+
+@app.put("/template-management/{key}/{version}", response_model=TemplateVersionResponse)
+def update_template_version(
+    key: str,
+    version: str,
+    request: TemplateUpdateRequest,
+    template_service: TemplateManagementService = Depends(get_template_management_service),
+):
+    try:
+        result = template_service.update_template(
+            key=key,
+            version=version,
+            **request.model_dump(),
+        )
+    except TemplateManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TemplateVersionResponse.model_validate(result)
+
+
+@app.post("/template-management/activate", response_model=TemplateVersionResponse)
+def activate_template_version(
+    request: TemplateActivateRequest,
+    template_service: TemplateManagementService = Depends(get_template_management_service),
+):
+    try:
+        result = template_service.activate_template(**request.model_dump())
+    except TemplateManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TemplateVersionResponse.model_validate(result)
+
+
+@app.delete("/template-management/{key}/{version}")
+def delete_template_version(
+    key: str,
+    version: str,
+    template_service: TemplateManagementService = Depends(get_template_management_service),
+):
+    try:
+        template_service.delete_template(key=key, version=version)
+    except TemplateManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "deleted"}
+
+
+@app.get("/prompt-management", response_model=PromptListingResponse)
+def list_prompt_management_prompts(
+    prompt_service: PromptManagementService = Depends(get_prompt_management_service),
+):
+    return PromptListingResponse.model_validate(prompt_service.list_prompts())
+
+
+@app.post("/prompt-management", response_model=PromptVersionResponse)
+def create_prompt_version(
+    request: PromptCreateRequest,
+    prompt_service: PromptManagementService = Depends(get_prompt_management_service),
+):
+    try:
+        result = prompt_service.create_prompt(**request.model_dump())
+    except PromptManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PromptVersionResponse.model_validate(result)
+
+
+@app.put("/prompt-management/{group}/{key}/{version}", response_model=PromptVersionResponse)
+def update_prompt_version(
+    group: str,
+    key: str,
+    version: str,
+    request: PromptUpdateRequest,
+    prompt_service: PromptManagementService = Depends(get_prompt_management_service),
+):
+    try:
+        result = prompt_service.update_prompt(
+            group=group,
+            key=key,
+            version=version,
+            **request.model_dump(),
+        )
+    except PromptManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PromptVersionResponse.model_validate(result)
+
+
+@app.post("/prompt-management/activate", response_model=PromptVersionResponse)
+def activate_prompt_version(
+    request: PromptActivateRequest,
+    prompt_service: PromptManagementService = Depends(get_prompt_management_service),
+):
+    try:
+        result = prompt_service.activate_prompt(**request.model_dump())
+    except PromptManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PromptVersionResponse.model_validate(result)
+
+
+@app.delete("/prompt-management/{group}/{key}/{version}")
+def delete_prompt_version(
+    group: str,
+    key: str,
+    version: str,
+    prompt_service: PromptManagementService = Depends(get_prompt_management_service),
+):
+    try:
+        prompt_service.delete_prompt(group=group, key=key, version=version)
+    except PromptManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "deleted"}
 
 
 @app.get("/health")

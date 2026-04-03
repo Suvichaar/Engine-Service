@@ -14,6 +14,7 @@ import httpx
 
 from app.domain.dto import ImageAsset, IntakePayload, SlideDeck
 from app.domain.interfaces import ImageAssetPipeline
+from app.prompt_templates import render_image_prompt
 from app.utils import is_placeholder_value
 from app.services.image_prompts import (
     extract_positive_keywords,
@@ -364,36 +365,18 @@ class AIImageProvider:
             try:
                 # Generate alt_text from slide content
                 # CRITICAL: Image prompts must ALWAYS be in English, regardless of story language
-                system_prompt = """You are an expert at creating visual image prompts for AI image generation. 
-Generate concise, descriptive alt text (image prompts) that are:
-- Visual and descriptive (1-2 sentences)
-- Suitable for AI image generation (DALL-E 3)
-- Focus on visual elements, colors, style, composition
-- Safe, positive, and family-friendly
-- No text, logos, or watermarks mentioned
-- Professional and modern aesthetic
-- ALWAYS in English (regardless of the story content language)
-
-IMPORTANT: The image prompt must be in English only, even if the slide content is in another language."""
-                
                 mode_context = "news story"
                 category_context = f"Category: {payload.category}" if payload.category else ""
-                
-                user_prompt = f"""Generate a descriptive image prompt (alt text) in ENGLISH ONLY for this slide content.
 
-Slide Content: {slide.text or 'Visual concept'}
-Mode: {mode_context}
-{category_context}
+                prompt_template = render_image_prompt(
+                    "alt_text_generation",
+                    slide_content=slide.text or "Visual concept",
+                    mode=mode_context,
+                    category_context=category_context,
+                )
+                system_prompt = prompt_template["system"]
+                user_prompt = prompt_template["user"]
 
-Requirements:
-- Descriptive and visual (1-2 sentences max)
-- Suitable for AI image generation
-- Focus on visual elements, colors, style
-- Safe, positive, family-friendly
-- Professional and modern
-
-Alt Text:"""
-                
                 alt_text = self._language_model.complete(system_prompt, user_prompt)
                 # Clean up the response
                 alt_text = alt_text.strip().strip('"').strip("'").strip()
@@ -434,15 +417,14 @@ Alt Text:"""
         
         # Convert non-English content to English description
         try:
-            convert_prompt = f"""Convert this content to a brief English description for an image prompt (max 30 words).
-Content: {text[:200]}
-Original Language: {lang_code}
-
-Return only the English description that captures the visual essence, no quotes or labels."""
-            
+            prompt_template = render_image_prompt(
+                "english_fallback",
+                content=text[:200],
+                original_language=lang_code,
+            )
             english_desc = self._language_model.complete(
-                "You are a translator. Convert content to English descriptions for image generation.",
-                convert_prompt
+                prompt_template["system"],
+                prompt_template["user"],
             ).strip().strip('"').strip("'")
             
             if english_desc and len(english_desc) > 10:

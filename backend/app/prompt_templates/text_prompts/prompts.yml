@@ -1,0 +1,5 @@
+prompts:
+- key: news
+  version: v1
+  file: news.v1.prompt
+  active: true

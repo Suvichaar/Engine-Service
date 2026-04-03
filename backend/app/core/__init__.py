@@ -133,6 +133,7 @@ class BrandingSettings(BaseModel):
 
 class FastAPISettings(BaseModel):
     base_url: str = "http://localhost:8000"
+    cors_allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
 
 class AnalyticsSettings(BaseModel):
@@ -258,6 +259,7 @@ def _env_override() -> Dict[str, Any]:
         },
         "fastapi": {
             "base_url": get_env_with_fallback("BASE_URL"),
+            "cors_allowed_origins": get_env_with_fallback("CORS_ALLOWED_ORIGINS"),
         },
         "analytics": {
             "google_analytics_id": get_env_with_fallback("GOOGLE_ANALYTICS_ID"),
@@ -369,6 +371,7 @@ SECTION_MAPPING: Dict[str, Dict[str, str]] = {
     },
     "fastapi": {
         "BASE_URL": "base_url",
+        "CORS_ALLOWED_ORIGINS": "cors_allowed_origins",
     },
     "analytics": {
         "GOOGLE_ANALYTICS_ID": "google_analytics_id",

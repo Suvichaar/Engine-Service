@@ -1,0 +1,49 @@
+templates:
+  - key: template-v19
+    version: v1
+    mode: news
+    file: news/template-v19.html
+    slide_generator: test-news-1
+    description: Legacy v19 news template.
+    enabled: true
+    active: true
+  - key: test-news-1
+    version: v1
+    mode: news
+    file: news/test-news-1.html
+    slide_generator: test-news-1
+    description: Default centered-text news template.
+    enabled: true
+    active: true
+  - key: test-news-2
+    version: v1
+    mode: news
+    file: news/test-news-2.html
+    slide_generator: test-news-2
+    description: Alternate news template variant.
+    enabled: true
+    active: true
+  - key: test-news-3
+    version: v1
+    mode: news
+    file: news/test-news-3.html
+    slide_generator: test-news-3
+    description: Breaking-news style template.
+    enabled: true
+    active: true
+  - key: test-news-3v1
+    version: v1
+    mode: news
+    file: news/test-news-3v1.html
+    slide_generator: test-news-3
+    description: Breaking-news variant v1.
+    enabled: true
+    active: true
+  - key: test-news-org
+    version: v1
+    mode: news
+    file: news/test-news-org.html
+    slide_generator: test-news-1
+    description: Organizational branding news template.
+    enabled: true
+    active: true

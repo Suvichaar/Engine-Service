@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 from urllib.parse import urlparse
 
 import yaml
@@ -35,6 +35,10 @@ def registry_path() -> Path:
     return registry_root() / "templates.yml"
 
 
+def template_manifest_path() -> Path:
+    return registry_root() / "manifest.yml"
+
+
 def normalize_template_key(template_key: str) -> str:
     if template_key.startswith(("http://", "https://", "s3://")):
         parsed = urlparse(template_key)
@@ -44,12 +48,8 @@ def normalize_template_key(template_key: str) -> str:
 
 @lru_cache(maxsize=1)
 def load_template_registry() -> dict[str, TemplateDefinition]:
-    config_path = registry_path()
-    with config_path.open("r", encoding="utf-8") as handle:
-        payload = yaml.safe_load(handle) or {}
-
     definitions: dict[str, TemplateDefinition] = {}
-    for item in payload.get("templates", []):
+    for item in _active_template_entries():
         definition = TemplateDefinition(
             key=item["key"],
             mode=Mode(item["mode"]),
@@ -60,6 +60,50 @@ def load_template_registry() -> dict[str, TemplateDefinition]:
         )
         definitions[definition.key] = definition
     return definitions
+
+
+def _active_template_entries() -> list[dict[str, Any]]:
+    manifest = template_manifest_path()
+    if manifest.exists():
+        with manifest.open("r", encoding="utf-8") as handle:
+            payload = yaml.safe_load(handle) or {}
+        return [
+            item
+            for item in payload.get("templates", [])
+            if bool(item.get("active")) and bool(item.get("enabled", True))
+        ]
+
+    config_path = registry_path()
+    with config_path.open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+    return payload.get("templates", [])
+
+
+def list_template_versions(mode: Mode | None = None) -> list[dict[str, Any]]:
+    manifest = template_manifest_path()
+    if manifest.exists():
+        with manifest.open("r", encoding="utf-8") as handle:
+            payload = yaml.safe_load(handle) or {}
+        entries = payload.get("templates", [])
+    else:
+        with registry_path().open("r", encoding="utf-8") as handle:
+            payload = yaml.safe_load(handle) or {}
+        entries = [
+            {
+                **item,
+                "version": "v1",
+                "active": True,
+            }
+            for item in payload.get("templates", [])
+        ]
+
+    if mode is None:
+        return list(entries)
+    return [item for item in entries if item.get("mode") == mode.value]
+
+
+def clear_template_registry_caches() -> None:
+    load_template_registry.cache_clear()
 
 
 def list_template_definitions(mode: Mode | None = None, *, enabled_only: bool = True) -> Iterable[TemplateDefinition]:
