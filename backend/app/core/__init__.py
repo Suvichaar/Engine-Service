@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional
 
 try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover
+    load_dotenv = None
+
+try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore
@@ -24,6 +29,22 @@ except ImportError:
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = BASE_DIR / "core" / "settings.toml"
+PROJECT_ROOT = BASE_DIR.parents[1]
+
+
+def _load_dotenv_files() -> None:
+    """Load local .env files before reading environment overrides."""
+
+    if load_dotenv is None:
+        return
+
+    for candidate in (
+        PROJECT_ROOT / ".env",
+        BASE_DIR.parent / ".env",
+        PROJECT_ROOT.parent / "backend" / ".env",
+    ):
+        if candidate.exists():
+            load_dotenv(candidate, override=False)
 
 
 class AzureAPISettings(BaseModel):
@@ -99,6 +120,11 @@ class DatabaseSettings(BaseModel):
     url: str = "sqlite:///./stories.db"
 
 
+class FastAPISettings(BaseModel):
+    base_url: str = "http://localhost:8000"
+    cors_allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+
 class AppSettings(BaseModel):
     azure_api: AzureAPISettings | None = None
     dalle: DalleSettings = DalleSettings()  # Optional with defaults - ai_image is preferred
@@ -113,6 +139,7 @@ class AppSettings(BaseModel):
     azure_voice: AzureVoiceSettings | None = None
     voice_storage: VoiceStorageSettings | None = None
     database: DatabaseSettings = DatabaseSettings()
+    fastapi: FastAPISettings = FastAPISettings()
 
 
 def _load_toml(path: Path) -> Dict[str, Any]:
@@ -195,6 +222,10 @@ def _env_override() -> Dict[str, Any]:
         },
         "database": {
             "url": get_env_with_fallback("DATABASE_URL"),
+        },
+        "fastapi": {
+            "base_url": get_env_with_fallback("BASE_URL"),
+            "cors_allowed_origins": get_env_with_fallback("CORS_ALLOWED_ORIGINS"),
         },
     }
     # Filter out None values but keep empty strings (which are valid values)
@@ -284,6 +315,10 @@ SECTION_MAPPING: Dict[str, Dict[str, str]] = {
     },
     "database": {
         "DATABASE_URL": "url",
+    },
+    "fastapi": {
+        "BASE_URL": "base_url",
+        "CORS_ALLOWED_ORIGINS": "cors_allowed_origins",
     },
 }
 
@@ -384,6 +419,7 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
 def get_settings() -> AppSettings:
     """Cached accessor using the default configuration path."""
 
+    _load_dotenv_files()
     return load_settings()
 
 
@@ -401,6 +437,7 @@ __all__ = [
     "AzureVoiceSettings",
     "VoiceStorageSettings",
     "DatabaseSettings",
+    "FastAPISettings",
     "get_settings",
     "load_settings",
 ]

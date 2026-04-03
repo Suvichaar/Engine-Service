@@ -53,6 +53,10 @@ RESIZE_VARIANTS = "sm:100x100,md:200x200"
 
 [database]
 DATABASE_URL = "sqlite:///tmp.db"
+
+[fastapi]
+BASE_URL = "http://localhost:8000"
+CORS_ALLOWED_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
 """,
     )
 
@@ -61,6 +65,7 @@ DATABASE_URL = "sqlite:///tmp.db"
     assert settings.azure_api.endpoint == "https://example.com"
     assert settings.dalle.api_key == "dallekey"
     assert settings.aws.bucket == "bucket"
+    assert settings.fastapi.cors_allowed_origins == "http://localhost:3000,http://127.0.0.1:3000"
 
 
 def test_load_settings_env_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -100,15 +105,21 @@ DEFAULT_ERROR_IMAGE = "config-error"
 
 [database]
 DATABASE_URL = "sqlite:///tmp.db"
+
+[fastapi]
+BASE_URL = "http://localhost:8000"
+CORS_ALLOWED_ORIGINS = "http://localhost:3000"
 """,
     )
 
     monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://from-env")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///env.db")
     monkeypatch.setenv("AWS_BUCKET", "env-bucket")
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "https://curious.example.com,https://app.example.com")
 
     settings = load_settings(config_path=config_path)
 
     assert settings.azure_api.endpoint == "https://from-env"
     assert settings.aws.bucket == "env-bucket"
     assert settings.database.url == "sqlite:///env.db"
+    assert settings.fastapi.cors_allowed_origins == "https://curious.example.com,https://app.example.com"

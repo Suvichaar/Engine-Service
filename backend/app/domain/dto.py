@@ -119,9 +119,12 @@ class PromptTemplateInfo(BaseModel):
     """Descriptor for a prompt template."""
 
     mode: str = Field(..., description="Mode identifier associated with the template.")
+    version: str = Field(..., description="Version identifier for the prompt definition.")
     description: Optional[str] = Field(default=None, description="Human-readable summary.")
     allowed_categories: List[str] = Field(default_factory=list, description="Allowed categories for the template.")
     user_template: str = Field(..., description="Raw user prompt template with placeholders.")
+    status: Optional[str] = Field(default=None, description="Lifecycle status such as active or deprecated.")
+    source_file: Optional[str] = Field(default=None, description="Prompt file backing this configuration.")
 
 
 class RenderedPrompt(BaseModel):
@@ -217,4 +220,3 @@ class CuriousNarrative(NarrativeResponse):
 
     explainability_notes: List[str] = Field(default_factory=list, description="Explainability notes per slide or section.")
     reasoning_trace: Optional[str] = Field(default=None, description="Optional reasoning trace provided by the LLM.")
-

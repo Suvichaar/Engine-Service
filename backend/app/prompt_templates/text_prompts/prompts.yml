@@ -1,0 +1,5 @@
+prompts:
+  - key: curious
+    version: v1
+    file: curious.v1.prompt
+    active: true

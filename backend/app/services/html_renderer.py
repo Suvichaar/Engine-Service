@@ -14,6 +14,7 @@ import httpx
 from pydantic import HttpUrl
 
 from app.domain.dto import ImageAsset, Mode, SlideBlock, SlideDeck, StoryRecord, VoiceAsset
+from app.services.template_registry import get_template_definition
 from app.services.template_slide_generators import get_slide_generator
 from app.services.model_clients import LanguageModel
 
@@ -46,29 +47,11 @@ class TemplateLoader:
 
     def _load_from_file(self, template_key: str, mode: Mode) -> str:
         """Load template from file system."""
-        # If template_key is a URL, extract template name
-        original_key = template_key
-        if template_key.startswith(("http://", "https://")):
-            # Extract filename from URL: "https://example.com/test-news-1.html" → "test-news-1"
-            template_key = template_key.split("/")[-1].replace(".html", "")
-            self._logger.info("Extracted template name '%s' from URL: %s", template_key, original_key)
-        
-        base_dir = self._template_base_path
-
-        # Try mode-specific template directory first
-        mode_dir = base_dir / mode.value
-        if not mode_dir.exists():
-            mode_dir = self._template_base_path
-            self._logger.warning("Using template_base_path as fallback: %s", mode_dir)
-
-        template_path = mode_dir / f"{template_key}.html"
-        if not template_path.exists():
-            # Try without extension
-            template_path = mode_dir / template_key
-            if not template_path.exists():
-                raise FileNotFoundError(f"Template not found: {template_path} (mode: {mode.value}, base_dir: {base_dir}, mode_dir: {mode_dir})")
-
-        self._logger.info("Loading template from file: %s (mode: %s, base_dir: %s)", template_path, mode.value, base_dir)
+        definition = get_template_definition(template_key)
+        if definition.mode != mode:
+            raise FileNotFoundError(f"Template '{definition.key}' is not registered for mode '{mode.value}'.")
+        template_path = definition.file_path
+        self._logger.info("Loading template from registry: %s (mode: %s)", template_path, mode.value)
         return template_path.read_text(encoding="utf-8")
 
     def _load_from_url(self, url: str) -> str:

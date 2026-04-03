@@ -51,8 +51,8 @@ RESIZE_VARIANTS = "sm:300x200,md:768x432,lg:1280x720"
 
 # Voice Providers
 [elevenlabs]
-ELEVENLABS_API_KEY = "sk_18ec75c00f3a3141f2766e4353ec918015cbb9ffbe79b439"
-ELEVENLABS_VOICE_ID = "yD0Zg2jxgfQLY8I2MEHO"  # e.g. "yD0Zg2jxgfQLY8I2MEHO"
+ELEVENLABS_API_KEY = "YOUR_ELEVENLABS_API_KEY_HERE"
+ELEVENLABS_VOICE_ID = "YOUR_ELEVENLABS_VOICE_ID_HERE"
 
 [azure_voice]
 AZURE_SPEECH_KEY = "YOUR_SPEECH_KEY_HERE"
@@ -67,3 +67,6 @@ VOICE_PREFIX = "media/audio"
 [database]
 DATABASE_URL = "postgresql+psycopg://user:password@host:5432/dbname"
 
+[fastapi]
+BASE_URL = "http://localhost:8000"
+CORS_ALLOWED_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000,https://your-frontend.vercel.app"

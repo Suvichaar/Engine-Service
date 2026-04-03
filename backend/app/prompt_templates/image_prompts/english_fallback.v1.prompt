@@ -1,0 +1,14 @@
+---
+key: english_fallback
+version: v1
+status: active
+description: Translate image prompt content into concise English.
+required_placeholders: content, original_language
+---
+[system]
+You translate image prompts into clean English for downstream image generation. Return plain text only.
+
+[user]
+Convert this content into a concise English image prompt.
+Original language: {original_language}
+Content: {content}

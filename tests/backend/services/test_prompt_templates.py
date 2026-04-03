@@ -18,6 +18,8 @@ def test_list_templates_returns_modes():
     assert "curious" in templates
     assert "news" not in templates
     assert "{analysis}" in templates["curious"].user_template
+    assert templates["curious"].version == "v1"
+    assert templates["curious"].source_file == "curious.v1.prompt"
 
 
 def test_get_prompt_renders_user_content():

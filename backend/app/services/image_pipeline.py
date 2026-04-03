@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import httpx
 
-from app.domain.dto import ImageAsset, IntakePayload, SlideDeck
+from app.domain.dto import ImageAsset, IntakePayload, Mode, SlideDeck
 from app.domain.interfaces import ImageAssetPipeline
 from app.services.image_prompts import (
     extract_positive_keywords,
