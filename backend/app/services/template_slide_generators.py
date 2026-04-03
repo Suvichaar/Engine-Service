@@ -4,6 +4,16 @@ from __future__ import annotations
 
 from typing import Optional, Protocol
 
+from app.services.template_registry import get_template_definition
+
+
+DEFAULT_BACKGROUND_IMAGE = "https://media.suvichaar.org/upload/polaris/polarisslide.png"
+
+
+def configure_template_generators(*, default_background_image: str) -> None:
+    global DEFAULT_BACKGROUND_IMAGE
+    DEFAULT_BACKGROUND_IMAGE = default_background_image
+
 
 class TemplateSlideGenerator(Protocol):
     """Interface for template-specific slide generators."""
@@ -32,7 +42,7 @@ class CuriousTemplate2SlideGenerator:
         """Generate AMP slide for curious-template-2 template."""
         # Default background image if none provided
         if not background_image_url:
-            background_image_url = "https://media.suvichaar.org/upload/polaris/polarisslide.png"
+            background_image_url = DEFAULT_BACKGROUND_IMAGE
 
         # Escape HTML in paragraph
         paragraph_escaped = paragraph.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -62,34 +72,23 @@ class CuriousTemplate2SlideGenerator:
         """
 
 
+class CuriousTemplate1SlideGenerator(CuriousTemplate2SlideGenerator):
+    """Generator for curious-template-1 template."""
+
+
+class TemplateV19SlideGenerator(CuriousTemplate2SlideGenerator):
+    """Generator for template-v19."""
+
+
 # Template Registry
 TEMPLATE_GENERATORS: dict[str, TemplateSlideGenerator] = {
+    "curious-template-1": CuriousTemplate1SlideGenerator(),
     "curious-template-2": CuriousTemplate2SlideGenerator(),
+    "template-v19": TemplateV19SlideGenerator(),
 }
 
 
 def get_slide_generator(template_key: str) -> TemplateSlideGenerator:
-    """
-    Get template-specific slide generator.
-
-    Handles:
-    - File names: "curious-template-2" → CuriousTemplate2SlideGenerator
-    - URLs: "https://example.com/template.html" → extracts "template"
-    - S3: "s3://bucket/template.html" → extracts "template"
-    """
-    # Extract base template name
-    base_name = template_key
-
-    # If URL, extract filename
-    if template_key.startswith(("http://", "https://")):
-        # Extract filename from URL
-        base_name = template_key.split("/")[-1].replace(".html", "")
-    elif template_key.startswith("s3://"):
-        # Extract filename from S3 path
-        base_name = template_key.split("/")[-1].replace(".html", "")
-    else:
-        # File name - remove extension if present
-        base_name = template_key.replace(".html", "")
-
-    # Get generator or default to curious-template-2
-    return TEMPLATE_GENERATORS.get(base_name, CuriousTemplate2SlideGenerator())
+    """Resolve a slide generator using the central template registry."""
+    definition = get_template_definition(template_key)
+    return TEMPLATE_GENERATORS.get(definition.slide_generator, CuriousTemplate2SlideGenerator())

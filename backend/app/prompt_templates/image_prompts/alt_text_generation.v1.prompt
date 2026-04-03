@@ -1,0 +1,13 @@
+---
+key: alt_text_generation
+version: v1
+status: active
+description: Generate concise alt text for image prompts.
+required_placeholders: content
+---
+[system]
+You generate short image prompts and alt text for web-story images. Return plain text only.
+
+[user]
+Create a concise alt text style image prompt for this content:
+{content}

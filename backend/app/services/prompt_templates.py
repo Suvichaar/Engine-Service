@@ -6,22 +6,24 @@ from typing import Iterable, Sequence
 
 from app.domain.dto import AnalysisReport, PromptTemplateInfo, RenderedPrompt
 from app.domain.interfaces import PromptTemplateService
-from app.prompts import get_prompt_config
-from app.prompts.registry import InvalidCategoryError, PromptNotFoundError, available_modes, render_prompt
+from app.prompt_templates import get_text_prompt_config, render_text_prompt
+from app.prompt_templates.registry import InvalidCategoryError, PromptNotFoundError
 
 
 class DefaultPromptTemplateService(PromptTemplateService):
     """Serve prompt templates from the prompts registry."""
 
     def list_templates(self) -> Iterable[PromptTemplateInfo]:
-        for mode in available_modes():
-            config = get_prompt_config(mode)
-            yield PromptTemplateInfo(
-                mode=mode,
-                description=getattr(config, "description", None),
-                allowed_categories=list(config.allowed_categories),
-                user_template=config.user_template,
-            )
+        config = get_text_prompt_config("curious")
+        yield PromptTemplateInfo(
+            mode="curious",
+            version=config.version,
+            description=getattr(config, "description", None),
+            allowed_categories=list(config.allowed_categories),
+            user_template=config.user_template,
+            status=getattr(config, "status", None),
+            source_file=(config.extra or {}).get("source_file"),
+        )
 
     def get_prompt(
         self,
@@ -32,7 +34,7 @@ class DefaultPromptTemplateService(PromptTemplateService):
         analysis: str,
         keywords: Iterable[str],
     ) -> RenderedPrompt:
-        result = render_prompt(
+        result = render_text_prompt(
             mode,
             category=category,
             language=language,
@@ -95,4 +97,3 @@ class PromptSelectionController:
 
 
 __all__ = ["DefaultPromptTemplateService", "PromptSelectionController", "PromptSelectionError"]
-

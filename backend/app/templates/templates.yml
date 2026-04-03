@@ -1,0 +1,19 @@
+templates:
+  - key: curious-template-1
+    mode: curious
+    file: curious/curious-template-1.html
+    slide_generator: curious-template-1
+    description: Default curious template.
+    enabled: true
+  - key: curious-template-2
+    mode: curious
+    file: curious/curious-template-2.html
+    slide_generator: curious-template-2
+    description: Dynamic curious slide template.
+    enabled: true
+  - key: template-v19
+    mode: curious
+    file: curious/template-v19.html
+    slide_generator: template-v19
+    description: Legacy curious template.
+    enabled: true

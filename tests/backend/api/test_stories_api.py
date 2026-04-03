@@ -50,7 +50,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 def test_create_and_get_story(client: TestClient):
     payload = {
         "mode": "curious",
-        "template_key": "modern",
+        "template_key": "curious-template-1",
         "slide_count": 4,
         "category": "Art",
         "text_prompt": "Tell me about AI art.",
@@ -69,5 +69,4 @@ def test_create_and_get_story(client: TestClient):
     fetched = get_response.json()
     assert fetched["id"] == story_id
     assert fetched["category"] == "Art"
-    assert fetched["template_key"] == "modern"
-
+    assert fetched["template_key"] == "curious-template-1"

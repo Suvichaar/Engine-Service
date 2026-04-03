@@ -5,9 +5,12 @@ from __future__ import annotations
 import logging
 import sys
 import os
+import re
+from collections import deque
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 # ============================================
 # LOGGING CONFIGURATION - MUST BE FIRST
@@ -48,10 +51,62 @@ logger.info(f"Log Level: {LOG_LEVEL}")
 logger.info("Handlers: stdout, stderr")
 logger.info("=" * 60)
 
+RECENT_LOGS: Deque[Dict[str, Any]] = deque(maxlen=500)
+
+_SENSITIVE_PATTERNS = [
+    re.compile(r"(?i)(api[_ -]?key|secret|password|token|speech[_ -]?key)\s*=\s*['\"]?([^,'\"\s]+)"),
+    re.compile(r"(?i)(aws_access_key_id|aws_secret_access_key)\s*=\s*['\"]?([^,'\"\s]+)"),
+]
+
+
+def _sanitize_log_message(message: str) -> str:
+    sanitized = message
+    for pattern in _SENSITIVE_PATTERNS:
+        sanitized = pattern.sub(lambda m: f"{m.group(1)}='***REDACTED***'", sanitized)
+    return sanitized
+
+
+class InMemoryLogHandler(logging.Handler):
+    """Keep a rolling window of structured logs for the local UI."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            RECENT_LOGS.append(
+                {
+                    "timestamp": datetime.fromtimestamp(
+                        record.created, tz=timezone.utc
+                    ).isoformat(),
+                    "logger": record.name,
+                    "level": record.levelname,
+                    "message": _sanitize_log_message(record.getMessage()),
+                }
+            )
+        except Exception:
+            self.handleError(record)
+
+
+_memory_log_handler = InMemoryLogHandler()
+_memory_log_handler.setLevel(logging.INFO)
+logging.getLogger().addHandler(_memory_log_handler)
+
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.schemas import StoryCreateRequest, StoryResponse
+from app.api.schemas import (
+    PromptActivateRequest,
+    PromptCreateRequest,
+    PromptListingResponse,
+    PromptUpdateRequest,
+    PromptVersionResponse,
+    TemplateActivateRequest,
+    TemplateCreateRequest,
+    TemplateListingResponse,
+    TemplateUpdateRequest,
+    TemplateVersionResponse,
+    StoryCreateRequest,
+    StoryResponse,
+)
 from app.core import get_settings
 from app.domain.dto import AttachmentDescriptor, Mode
 from app.domain.interfaces import PromptTemplateService
@@ -78,7 +133,11 @@ from app.services.azure_openai_client import AzureOpenAILanguageModel
 from app.services.model_clients import CuriousModelClient, LanguageModel
 from app.services.model_router import DefaultModelRouter
 from app.services.orchestrator import StoryOrchestrator
+from app.services.prompt_management import PromptManagementError, PromptManagementService
+from app.services.template_management import TemplateManagementError, TemplateManagementService
 from app.services.prompt_templates import DefaultPromptTemplateService, PromptSelectionController
+from app.services.template_registry import list_template_definitions
+from app.services.template_slide_generators import configure_template_generators
 from app.services.user_input import DefaultUserInputService
 from app.services.voice_synthesis import (
     AzureTTSClient,
@@ -90,7 +149,22 @@ from app.services.html_renderer import HTMLTemplateRenderer
 from app.utils import is_placeholder_value
 
 
-app = FastAPI(title="NewsLab Service v2")
+def _parse_cors_allowed_origins(raw_value: Optional[str]) -> list[str]:
+    if not raw_value:
+        return ["http://localhost:3000", "http://127.0.0.1:3000"]
+    origins = [item.strip() for item in raw_value.split(",") if item.strip()]
+    return origins or ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+
+settings = get_settings()
+app = FastAPI(title="Curious Service Backend")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_parse_cors_allowed_origins(settings.fastapi.cors_allowed_origins),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Add custom exception handler for better error messages
 from fastapi.responses import JSONResponse
@@ -132,6 +206,16 @@ def get_prompt_service() -> PromptTemplateService:
 
 
 @lru_cache(maxsize=1)
+def get_prompt_management_service() -> PromptManagementService:
+    return PromptManagementService()
+
+
+@lru_cache(maxsize=1)
+def get_template_management_service() -> TemplateManagementService:
+    return TemplateManagementService(mode=Mode.CURIOUS)
+
+
+@lru_cache(maxsize=1)
 def get_session_factory():
     """Get session factory, or return None if database is not available."""
     try:
@@ -155,19 +239,18 @@ def get_orchestrator() -> StoryOrchestrator:
     settings = get_settings()
     logger = logging.getLogger(__name__)
 
-    # --- Voice provider configuration ---------------------------------------
-    # For now, hard-wire ElevenLabs from known working credentials so that
-    # voice synthesis definitely uses it, independent of env override quirks.
-    ELEVENLABS_API_KEY = "sk_18ec75c00f3a3141f2766e4353ec918015cbb9ffbe79b439"
-    ELEVENLABS_VOICE_ID = "yD0Zg2jxgfQLY8I2MEHO"
-
     # Debug: log loaded voice settings (warn level so they appear by default)
     logger.warning(
         "Voice config - elevenlabs: api_key_set=%s voice_id_set=%s",
-        bool(ELEVENLABS_API_KEY),
-        bool(ELEVENLABS_VOICE_ID),
+        bool(settings.elevenlabs and not is_placeholder_value(settings.elevenlabs.api_key)),
+        bool(settings.elevenlabs and not is_placeholder_value(settings.elevenlabs.voice_id)),
     )
-    logger.warning("Voice config - azure_voice: %s", settings.azure_voice)
+    logger.warning(
+        "Voice config - azure_voice: speech_key_set=%s region=%s voice=%s",
+        bool(settings.azure_voice and not is_placeholder_value(settings.azure_voice.speech_key)),
+        settings.azure_voice.region if settings.azure_voice else None,
+        settings.azure_voice.voice if settings.azure_voice else None,
+    )
 
     user_input_service = DefaultUserInputService()
     language_service = _build_language_service(settings)
@@ -179,6 +262,9 @@ def get_orchestrator() -> StoryOrchestrator:
     )
     prompt_service = get_prompt_service()
     prompt_controller = PromptSelectionController(prompt_service)
+    configure_template_generators(
+        default_background_image="https://media.suvichaar.org/upload/polaris/polarisslide.png"
+    )
 
     # Use Azure OpenAI if credentials are available, otherwise fallback to stub
     if settings.azure_api and not is_placeholder_value(settings.azure_api.api_key):
@@ -244,10 +330,12 @@ def get_orchestrator() -> StoryOrchestrator:
     voice_providers = []
     default_voice_provider = None
 
-    # ElevenLabs provider: use hard-coded credentials for now
-    if ELEVENLABS_API_KEY:
+    if settings.elevenlabs and not is_placeholder_value(settings.elevenlabs.api_key):
         voice_providers.append(
-            ElevenLabsClient(api_key=ELEVENLABS_API_KEY, voice_id=ELEVENLABS_VOICE_ID)
+            ElevenLabsClient(
+                api_key=settings.elevenlabs.api_key,
+                voice_id=settings.elevenlabs.voice_id,
+            )
         )
         default_voice_provider = "elevenlabs_pro"
     if settings.azure_voice and not is_placeholder_value(settings.azure_voice.speech_key):
@@ -477,7 +565,7 @@ def create_story(request: StoryCreateRequest, orchestrator: StoryOrchestrator = 
     return StoryResponse.model_validate(record.model_dump())
 
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, HTTPException
 
 import re
 
@@ -506,13 +594,156 @@ def get_story(
 
 
 @app.get("/templates", response_model=List[str])
-def list_templates(prompt_service: PromptTemplateService = Depends(get_prompt_service)):
-    return [info.mode for info in prompt_service.list_templates()]
+def list_templates():
+    return sorted(definition.key for definition in list_template_definitions(Mode.CURIOUS))
+
+
+@app.get("/template-management", response_model=TemplateListingResponse)
+def list_template_management_templates(
+    template_service: TemplateManagementService = Depends(get_template_management_service),
+):
+    return TemplateListingResponse.model_validate(template_service.list_templates())
+
+
+@app.post("/template-management", response_model=TemplateVersionResponse)
+def create_template_version(
+    request: TemplateCreateRequest,
+    template_service: TemplateManagementService = Depends(get_template_management_service),
+):
+    try:
+        result = template_service.create_template(**request.model_dump())
+    except TemplateManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TemplateVersionResponse.model_validate(result)
+
+
+@app.put("/template-management/{key}/{version}", response_model=TemplateVersionResponse)
+def update_template_version(
+    key: str,
+    version: str,
+    request: TemplateUpdateRequest,
+    template_service: TemplateManagementService = Depends(get_template_management_service),
+):
+    try:
+        result = template_service.update_template(
+            key=key,
+            version=version,
+            **request.model_dump(),
+        )
+    except TemplateManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TemplateVersionResponse.model_validate(result)
+
+
+@app.post("/template-management/activate", response_model=TemplateVersionResponse)
+def activate_template_version(
+    request: TemplateActivateRequest,
+    template_service: TemplateManagementService = Depends(get_template_management_service),
+):
+    try:
+        result = template_service.activate_template(**request.model_dump())
+    except TemplateManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TemplateVersionResponse.model_validate(result)
+
+
+@app.delete("/template-management/{key}/{version}")
+def delete_template_version(
+    key: str,
+    version: str,
+    template_service: TemplateManagementService = Depends(get_template_management_service),
+):
+    try:
+        template_service.delete_template(key=key, version=version)
+    except TemplateManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "deleted"}
+
+
+@app.get("/prompt-management", response_model=PromptListingResponse)
+def list_prompt_management_prompts(
+    prompt_service: PromptManagementService = Depends(get_prompt_management_service),
+):
+    return PromptListingResponse.model_validate(prompt_service.list_prompts())
+
+
+@app.post("/prompt-management", response_model=PromptVersionResponse)
+def create_prompt_version(
+    request: PromptCreateRequest,
+    prompt_service: PromptManagementService = Depends(get_prompt_management_service),
+):
+    try:
+        result = prompt_service.create_prompt(**request.model_dump())
+    except PromptManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PromptVersionResponse.model_validate(result)
+
+
+@app.put("/prompt-management/{group}/{key}/{version}", response_model=PromptVersionResponse)
+def update_prompt_version(
+    group: str,
+    key: str,
+    version: str,
+    request: PromptUpdateRequest,
+    prompt_service: PromptManagementService = Depends(get_prompt_management_service),
+):
+    try:
+        result = prompt_service.update_prompt(
+            group=group,
+            key=key,
+            version=version,
+            **request.model_dump(),
+        )
+    except PromptManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PromptVersionResponse.model_validate(result)
+
+
+@app.post("/prompt-management/activate", response_model=PromptVersionResponse)
+def activate_prompt_version(
+    request: PromptActivateRequest,
+    prompt_service: PromptManagementService = Depends(get_prompt_management_service),
+):
+    try:
+        result = prompt_service.activate_prompt(**request.model_dump())
+    except PromptManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PromptVersionResponse.model_validate(result)
+
+
+@app.delete("/prompt-management/{group}/{key}/{version}")
+def delete_prompt_version(
+    group: str,
+    key: str,
+    version: str,
+    prompt_service: PromptManagementService = Depends(get_prompt_management_service),
+):
+    try:
+        prompt_service.delete_prompt(group=group, key=key, version=version)
+    except PromptManagementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "deleted"}
 
 
 @app.get("/health")
 def healthcheck():
     return {"status": "ok"}
+
+
+@app.get("/logs")
+def get_logs(limit: int = 200, level: Optional[str] = None):
+    safe_limit = max(1, min(limit, 500))
+    entries = list(RECENT_LOGS)
+
+    if level:
+        level_upper = level.upper()
+        entries = [entry for entry in entries if entry["level"] == level_upper]
+
+    return {
+        "count": min(len(entries), safe_limit),
+        "total_buffered": len(RECENT_LOGS),
+        "logs": entries[-safe_limit:],
+    }
 
 
 @app.get("/stories/{story_id}/html")
