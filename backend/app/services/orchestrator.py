@@ -367,13 +367,26 @@ class StoryOrchestrator:
 
         story_id = self.id_factory()
         created_at = datetime.utcnow()
-        
+
         # Get story title for URL generation (Curious mode uses title-based URLs)
         story_title = None
         if payload.mode == Mode.CURIOUS and narrative.slide_deck.slides:
             story_title = narrative.slide_deck.slides[0].text or None
-        
+
         canurl, canurl1 = self._build_canurls(story_id, story_title=story_title, mode=payload.mode)
+
+        og_image_url = None
+        if image_assets:
+            cover = image_assets[0]
+            cover_key = getattr(cover, "original_object_key", None)
+            if cover_key:
+                try:
+                    og_image_url = self.image_pipeline.generate_og_image(
+                        source_s3_key=cover_key,
+                        story_id=str(story_id),
+                    )
+                except Exception as e:
+                    logger.warning("Failed to generate OG image for story %s: %s", story_id, e)
 
         record = StoryRecord(
             id=story_id,
@@ -386,9 +399,10 @@ class StoryOrchestrator:
             slide_deck=narrative.slide_deck,
             image_assets=image_assets,
             voice_assets=voice_assets,
-                        prompt_curious=rendered_prompt.user,
+            prompt_curious=rendered_prompt.user,
             canurl=canurl,
             canurl1=canurl1,
+            og_image_url=og_image_url,
             created_at=created_at,
         )
 
