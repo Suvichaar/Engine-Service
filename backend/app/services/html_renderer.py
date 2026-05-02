@@ -109,6 +109,7 @@ class PlaceholderMapper:
         analytics_id: str = "",
         adsense_client_id: str = "",
         adsense_slot_id: str = "",
+        default_og_image: str = "",
         language_model: Optional[LanguageModel] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
@@ -125,6 +126,7 @@ class PlaceholderMapper:
         self._analytics_id = analytics_id
         self._adsense_client_id = adsense_client_id
         self._adsense_slot_id = adsense_slot_id
+        self._default_og_image = default_og_image
         self._language_model = language_model
         self._logger = logger or logging.getLogger(__name__)
 
@@ -258,6 +260,14 @@ class PlaceholderMapper:
                         placeholders["msthumbnailcoverurl"] = self._generate_resized_url(cover_url, 300, 300)
                     except Exception:
                         placeholders["msthumbnailcoverurl"] = cover_url
+
+        # OG/social-share image (1200x630 JPG) — pre-baked URL preferred; falls back to default OG, then to cover.
+        og_url = str(record.og_image_url) if getattr(record, "og_image_url", None) else ""
+        if not og_url and self._default_og_image:
+            og_url = self._default_og_image
+        if not og_url:
+            og_url = placeholders.get("image0", "")
+        placeholders["og_image_url"] = og_url
 
         # Slide images (s1image1, s2image1, etc.)
         # Special handling for News mode:
@@ -598,6 +608,7 @@ class HTMLTemplateRenderer:
         analytics_id: str = "",
         adsense_client_id: str = "",
         adsense_slot_id: str = "",
+        default_og_image: str = "",
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._loader = template_loader or TemplateLoader(template_base_path=template_base_path)
@@ -615,6 +626,7 @@ class HTMLTemplateRenderer:
             analytics_id=analytics_id,
             adsense_client_id=adsense_client_id,
             adsense_slot_id=adsense_slot_id,
+            default_og_image=default_og_image,
             language_model=language_model,
         )
         self._logger = logger or logging.getLogger(__name__)

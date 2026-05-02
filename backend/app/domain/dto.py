@@ -209,6 +209,7 @@ class StoryRecord(BaseModel):
     prompt_file: Optional[str] = Field(default=None, description="Prompt definition file used to generate the story.")
     canurl: Optional[HttpUrl] = Field(default=None, description="Primary shareable URL.")
     canurl1: Optional[HttpUrl] = Field(default=None, description="Secondary shareable URL.")
+    og_image_url: Optional[HttpUrl] = Field(default=None, description="Pre-baked 1200x630 JPG used for og:image / twitter:image (WhatsApp-friendly share preview).")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp when the story was stored.")
 
 

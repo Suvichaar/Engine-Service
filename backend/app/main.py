@@ -334,6 +334,7 @@ def get_orchestrator() -> StoryOrchestrator:
         aws_access_key=settings.aws.access_key,
         aws_secret_key=settings.aws.secret_key,
         aws_region=settings.aws.region,
+        og_cdn_base=settings.aws.cdn_base,
     )
     image_pipeline = DefaultImageAssetPipeline(image_providers, image_storage)
 
@@ -420,6 +421,7 @@ def get_orchestrator() -> StoryOrchestrator:
         analytics_id=settings.analytics.google_analytics_id,
         adsense_client_id=settings.analytics.adsense_client_id,
         adsense_slot_id=settings.analytics.adsense_slot_id,
+        default_og_image=f"{settings.aws.cdn_base.rstrip('/')}/og-images/_default.jpg" if settings.aws.cdn_base else "",
         language_model=language_model,  # Pass language model for LLM-based SEO generation
     )
 

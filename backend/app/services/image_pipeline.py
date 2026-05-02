@@ -67,6 +67,13 @@ class DefaultImageAssetPipeline(ImageAssetPipeline):
         self._providers = list(providers)
         self._storage = storage
 
+    def generate_og_image(self, *, source_s3_key: str, story_id: str) -> Optional[str]:
+        """Delegate OG-image baking to the storage service if it supports it."""
+        og_fn = getattr(self._storage, "generate_og_image", None)
+        if og_fn is None:
+            return None
+        return og_fn(source_s3_key=source_s3_key, story_id=story_id)
+
     def process(
         self, deck: SlideDeck, payload: IntakePayload, article_images: Optional[list[str]] = None
     ) -> List[ImageAsset]:
@@ -199,10 +206,20 @@ class AIImageProvider:
         self._min_cooldown_seconds = cooldown_seconds  # Configurable cooldown
         self._language_model = language_model  # For automatic alt_text generation
 
+    def _uses_mai_provider_api(self) -> bool:
+        return "/mai/v1/images/generations" in self._endpoint
+
     def _uses_foundry_provider_api(self) -> bool:
+        if self._uses_mai_provider_api():
+            return False
         return "/providers/blackforestlabs/" in self._endpoint or ".services.ai.azure.com/" in self._endpoint
 
     def _build_headers(self) -> dict[str, str]:
+        if self._uses_mai_provider_api():
+            return {
+                "api-key": self._api_key,
+                "Content-Type": "application/json",
+            }
         if self._uses_foundry_provider_api():
             return {
                 "Authorization": f"Bearer {self._api_key}",
@@ -215,6 +232,14 @@ class AIImageProvider:
         }
 
     def _build_request_body(self, prompt: str, reference_image_bytes: Optional[bytes]) -> dict[str, object]:
+        if self._uses_mai_provider_api():
+            return {
+                "prompt": prompt,
+                "width": 1024,
+                "height": 1024,
+                "n": 1,
+                "model": "MAI-Image-2e",
+            }
         if self._uses_foundry_provider_api():
             body: dict[str, object] = {
                 "prompt": prompt,
@@ -1436,6 +1461,8 @@ class S3ImageStorageService:
         aws_access_key: Optional[str] = None,
         aws_secret_key: Optional[str] = None,
         aws_region: Optional[str] = None,
+        og_cdn_base: Optional[str] = None,
+        og_prefix: str = "og-images/",
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._bucket = bucket
@@ -1445,6 +1472,8 @@ class S3ImageStorageService:
         self._aws_access_key = aws_access_key
         self._aws_secret_key = aws_secret_key
         self._aws_region = aws_region
+        self._og_cdn_base = og_cdn_base.rstrip("/") + "/" if og_cdn_base else None
+        self._og_prefix = (og_prefix.rstrip("/") + "/") if og_prefix else "og-images/"
         self._logger = logger or logging.getLogger(__name__)
         self._s3_client = None
 
@@ -1546,6 +1575,67 @@ class S3ImageStorageService:
         # This method is kept for backward compatibility but should not be used
         # The store() method now generates base64 template URLs directly
         return f"{self._cdn_base}{variant}/{object_key}"
+
+    def generate_og_image(
+        self,
+        *,
+        source_s3_key: str,
+        story_id: str,
+        target_size: tuple[int, int] = (1200, 630),
+        quality: int = 85,
+    ) -> Optional[str]:
+        """Pre-bake a 1200x630 JPG cover for social sharing (WhatsApp/FB/Twitter).
+
+        Downloads `source_s3_key` from S3, cover-fits to `target_size`, encodes as JPEG,
+        uploads to `og-images/{story_id}.jpg`, and returns a direct CDN URL hosted on
+        `og_cdn_base`. Returns None if any step fails.
+        """
+        if not self._og_cdn_base:
+            self._logger.warning("og_cdn_base not configured; skipping OG image generation")
+            return None
+
+        s3_client = self._get_s3_client()
+        if not s3_client:
+            self._logger.warning("S3 client unavailable; skipping OG image generation")
+            return None
+
+        try:
+            from io import BytesIO
+            from PIL import Image, ImageOps
+        except ImportError:
+            self._logger.warning("Pillow not installed; skipping OG image generation")
+            return None
+
+        try:
+            response = s3_client.get_object(Bucket=self._bucket, Key=source_s3_key)
+            source_bytes = response["Body"].read()
+
+            with Image.open(BytesIO(source_bytes)) as img:
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                og_img = ImageOps.fit(img, target_size, method=Image.LANCZOS, centering=(0.5, 0.5))
+                buffer = BytesIO()
+                og_img.save(buffer, format="JPEG", quality=quality, optimize=True)
+                og_bytes = buffer.getvalue()
+
+            og_key = f"{self._og_prefix}{story_id}.jpg"
+            s3_client.put_object(
+                Bucket=self._bucket,
+                Key=og_key,
+                Body=og_bytes,
+                ContentType="image/jpeg",
+                CacheControl="public, max-age=31536000",
+            )
+
+            og_url = f"{self._og_cdn_base}{og_key}"
+            self._logger.info("Generated OG image: s3://%s/%s -> %s", self._bucket, og_key, og_url)
+            return og_url
+        except Exception as e:
+            self._logger.error(
+                "Failed to generate OG image (source_s3_key=%s, story_id=%s): %s",
+                source_s3_key, story_id, e,
+            )
+            return None
 
 
 __all__ = [
