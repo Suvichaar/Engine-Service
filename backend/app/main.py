@@ -151,10 +151,15 @@ from app.utils import is_placeholder_value
 
 
 def _parse_cors_allowed_origins(raw_value: Optional[str]) -> list[str]:
-    if not raw_value:
-        return ["http://localhost:3000", "http://127.0.0.1:3000"]
-    origins = [item.strip() for item in raw_value.split(",") if item.strip()]
-    return origins or ["http://localhost:3000", "http://127.0.0.1:3000"]
+    default_origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://suvichaar-storygenerator.vercel.app",
+        "https://suvichaar.org",
+        "https://www.suvichaar.org",
+    ]
+    origins = [item.strip() for item in raw_value.split(",") if item.strip()] if raw_value else []
+    return list(dict.fromkeys([*default_origins, *origins]))
 
 
 settings = get_settings()
