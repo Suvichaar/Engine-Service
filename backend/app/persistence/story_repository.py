@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 from uuid import UUID
 
-from sqlalchemy import DateTime, Integer, JSON, String, Text
+from sqlalchemy import DateTime, Integer, JSON, String, Text, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from app.domain.dto import DocInsights, ImageAsset, Mode, SlideDeck, StoryRecord, VoiceAsset
@@ -36,6 +36,38 @@ class StoryORM(Base):
     canurl: Mapped[str | None] = mapped_column(Text)
     canurl1: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+def ensure_story_schema(engine) -> None:
+    """Add columns introduced after the initial stories table was created."""
+
+    inspector = inspect(engine)
+    if not inspector.has_table(StoryORM.__tablename__):
+        return
+
+    existing_columns = {
+        column["name"] for column in inspector.get_columns(StoryORM.__tablename__)
+    }
+    required_columns = {
+        "prompt_news": "TEXT",
+        "prompt_version": "VARCHAR(32)",
+        "prompt_file": "VARCHAR(255)",
+        "canurl": "TEXT",
+        "canurl1": "TEXT",
+    }
+    missing_columns = [
+        (name, column_type)
+        for name, column_type in required_columns.items()
+        if name not in existing_columns
+    ]
+    if not missing_columns:
+        return
+
+    with engine.begin() as connection:
+        for name, column_type in missing_columns:
+            connection.execute(
+                text(f"ALTER TABLE {StoryORM.__tablename__} ADD COLUMN {name} {column_type}")
+            )
 
 
 class SqlAlchemyStoryRepository(StoryRepository):
@@ -132,4 +164,4 @@ class SqlAlchemyStoryRepository(StoryRepository):
         )
 
 
-__all__ = ["SqlAlchemyStoryRepository", "StoryORM", "Base"]
+__all__ = ["SqlAlchemyStoryRepository", "StoryORM", "Base", "ensure_story_schema"]

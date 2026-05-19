@@ -112,7 +112,12 @@ from app.api.schemas import (
 from app.core import get_settings
 from app.domain.dto import AttachmentDescriptor, Mode
 from app.domain.interfaces import ModelClient, PromptTemplateService
-from app.persistence import Base, SqlAlchemyStoryRepository, create_session_factory
+from app.persistence import (
+    Base,
+    SqlAlchemyStoryRepository,
+    create_session_factory,
+    ensure_story_schema,
+)
 from app.services.analysis import CompositeAnalysisFacade, HeuristicFunctionAnalyzer, PromptRecommendationAnalyzer
 from app.services.document_intelligence import (
     AzureDocumentIntelligenceAdapter,
@@ -258,6 +263,7 @@ def get_session_factory():
         factory = create_session_factory(settings.database.url)
         engine = factory.kw["bind"]
         Base.metadata.create_all(engine)
+        ensure_story_schema(engine)
         return factory
     except Exception as e:
         # Database connection failed - return None to skip database
