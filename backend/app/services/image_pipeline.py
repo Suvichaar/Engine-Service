@@ -202,11 +202,11 @@ class AIImageProvider:
     # threads so concurrent generators don't burst the upstream API. The lock
     # only covers the cooldown bookkeeping — actual HTTP calls run in parallel.
     _last_request_time = None
-    _min_cooldown_seconds = 0.5  # spacing between request kickoffs
+    _min_cooldown_seconds = 1.0  # spacing between request kickoffs
     _cooldown_lock = threading.Lock()
-    _max_concurrent_requests = 3
+    _max_concurrent_requests = 2
 
-    def __init__(self, endpoint: str, api_key: str, cooldown_seconds: float = 0.5, language_model=None) -> None:
+    def __init__(self, endpoint: str, api_key: str, cooldown_seconds: float = 1.0, language_model=None) -> None:
         self._endpoint = endpoint
         self._api_key = api_key
         self._min_cooldown_seconds = cooldown_seconds  # Configurable cooldown
