@@ -65,7 +65,12 @@ class StoryOrchestrator:
     story_base_url: Optional[str] = None
     save_to_database: bool = True  # Default to True - save stories to database
 
-    def create_story(self, request: StoryCreateRequest) -> StoryRecord:
+    def create_story(
+        self,
+        request: StoryCreateRequest,
+        *,
+        preset_story_id: Optional[UUID] = None,
+    ) -> StoryRecord:
         import logging
         logger = logging.getLogger(__name__)
         
@@ -392,7 +397,7 @@ class StoryOrchestrator:
             logger.error("❌ Voice synthesis failed: %s", e, exc_info=True)
             voice_assets = []  # Continue without voice
 
-        story_id = self.id_factory()
+        story_id = preset_story_id or self.id_factory()
         created_at = datetime.utcnow()
 
         story_title = None
