@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import logging
 import mimetypes
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Iterable, List, Mapping, Optional, Protocol, Sequence
 from urllib.parse import urlparse
@@ -195,12 +197,16 @@ class AIImageProvider:
     """Generate images using an AI image model."""
 
     source = "ai"
-    
-    # Class-level rate limiter: track last request time
-    _last_request_time = None
-    _min_cooldown_seconds = 5.0  # Minimum 5 seconds between requests
 
-    def __init__(self, endpoint: str, api_key: str, cooldown_seconds: float = 5.0, language_model=None) -> None:
+    # Class-level rate limiter: serialises the *kickoff* of requests across
+    # threads so concurrent generators don't burst the upstream API. The lock
+    # only covers the cooldown bookkeeping — actual HTTP calls run in parallel.
+    _last_request_time = None
+    _min_cooldown_seconds = 0.5  # spacing between request kickoffs
+    _cooldown_lock = threading.Lock()
+    _max_concurrent_requests = 3
+
+    def __init__(self, endpoint: str, api_key: str, cooldown_seconds: float = 0.5, language_model=None) -> None:
         self._endpoint = endpoint
         self._api_key = api_key
         self._min_cooldown_seconds = cooldown_seconds  # Configurable cooldown
@@ -337,18 +343,21 @@ class AIImageProvider:
         return result
 
     def _wait_for_cooldown(self):
-        """Wait if needed to respect rate limits."""
+        """Serialise request kickoffs across threads to avoid bursting."""
         import time
         logger = logging.getLogger(__name__)
-        
-        if AIImageProvider._last_request_time is not None:
-            elapsed = time.time() - AIImageProvider._last_request_time
-            if elapsed < self._min_cooldown_seconds:
-                wait_time = self._min_cooldown_seconds - elapsed
-                logger.info(f"⏳ Rate limiting: waiting {wait_time:.1f} seconds before next request...")
-                time.sleep(wait_time)
-        
-        AIImageProvider._last_request_time = time.time()
+
+        with AIImageProvider._cooldown_lock:
+            if AIImageProvider._last_request_time is not None:
+                elapsed = time.time() - AIImageProvider._last_request_time
+                if elapsed < self._min_cooldown_seconds:
+                    wait_time = self._min_cooldown_seconds - elapsed
+                    logger.info(
+                        "⏳ Spacing requests: waiting %.2fs before next kickoff",
+                        wait_time,
+                    )
+                    time.sleep(wait_time)
+            AIImageProvider._last_request_time = time.time()
 
     # Prompt generation methods now delegate to image_prompts module
     def _sanitize_prompt(self, text: str) -> str:
@@ -463,26 +472,21 @@ class AIImageProvider:
             return "Visual concept"
 
     def generate(self, deck: SlideDeck, payload: IntakePayload) -> Sequence[ImageContent]:
-        contents: list[ImageContent] = []
         logger = logging.getLogger(__name__)
         max_idx = min(payload.slide_count or len(deck.slides), len(deck.slides))
-        logger.info("🎨 Generating AI images for news mode: requested=%d deck_slides=%d", max_idx, len(deck.slides))
-
-        import time
-        last_successful_image = None
         article_content = payload.metadata.get("article_content") if payload.metadata else None
 
-        for idx in range(max_idx):
+        slide_indices = [
+            idx for idx in range(max_idx) if not deck.slides[idx].image_url
+        ]
+        logger.info(
+            "🎨 Generating AI images concurrently: target_slides=%d concurrency=%d",
+            len(slide_indices),
+            self._max_concurrent_requests,
+        )
+
+        def _produce(idx: int):
             slide = deck.slides[idx]
-            if slide.image_url:
-                logger.debug("⏭️ Skipping slide %d (already has image_url)", idx)
-                continue
-
-            if idx > 0:
-                delay = 3.0 if idx == 1 else 6.0
-                logger.info("⏳ Waiting %.1f seconds before generating image for slide %d...", delay, idx)
-                time.sleep(delay)
-
             slide_text = (slide.text or "Visual concept")[:200]
             prompt = generate_news_slide_prompt(
                 slide_text,
@@ -491,17 +495,23 @@ class AIImageProvider:
                 is_cta=(idx == max_idx - 1),
                 article_content=article_content,
             )
-
             try:
-                reference_image = self._load_reference_image_bytes(
-                    self._pick_reference_image_ref(payload, idx)
-                ) if self._pick_reference_image_ref(payload, idx) else None
-                image_content = self._generate_image(slide.placeholder_id, prompt, reference_image_bytes=reference_image)
-                contents.append(image_content)
-                last_successful_image = image_content
+                ref = self._pick_reference_image_ref(payload, idx)
+                reference_image = self._load_reference_image_bytes(ref) if ref else None
+                image_content = self._generate_image(
+                    slide.placeholder_id,
+                    prompt,
+                    reference_image_bytes=reference_image,
+                )
                 logger.info("✅ Generated image for slide %d (index %d)", idx + 1, idx)
+                return idx, image_content, False
             except Exception as exc:
-                logger.warning("❌ AI image generation failed for slide %d (index %d): %s", idx + 1, idx, exc)
+                logger.warning(
+                    "❌ AI image generation failed for slide %d (index %d): %s",
+                    idx + 1,
+                    idx,
+                    exc,
+                )
                 try:
                     fallback_prompt = (
                         generate_news_slide_prompt(
@@ -514,27 +524,56 @@ class AIImageProvider:
                         if article_content
                         else self._generate_safe_news_prompt(slide_text, slide_index=idx)
                     )
-                    reference_image = self._load_reference_image_bytes(
-                        self._pick_reference_image_ref(payload, idx)
-                    ) if self._pick_reference_image_ref(payload, idx) else None
+                    ref = self._pick_reference_image_ref(payload, idx)
+                    reference_image = self._load_reference_image_bytes(ref) if ref else None
                     fallback_content = self._generate_image(
                         slide.placeholder_id,
                         fallback_prompt,
                         reference_image_bytes=reference_image,
                     )
-                    contents.append(fallback_content)
-                    last_successful_image = fallback_content
                     logger.info("✅ Generated fallback image for slide %d", idx + 1)
+                    return idx, fallback_content, False
                 except Exception as fallback_exc:
-                    logger.warning("❌ Fallback generation failed for slide %d: %s", idx + 1, fallback_exc)
-                    if last_successful_image:
-                        from copy import deepcopy
+                    logger.warning(
+                        "❌ Fallback generation failed for slide %d: %s",
+                        idx + 1,
+                        fallback_exc,
+                    )
+                    return idx, None, True
 
-                        fallback_content = deepcopy(last_successful_image)
-                        fallback_content.placeholder_id = slide.placeholder_id
-                        contents.append(fallback_content)
-                    else:
-                        logger.error("❌ All fallback options exhausted for slide %d; skipping image", idx + 1)
+        results: dict[int, Optional[ImageContent]] = {}
+        if slide_indices:
+            with ThreadPoolExecutor(
+                max_workers=self._max_concurrent_requests,
+                thread_name_prefix="ai-image",
+            ) as executor:
+                for idx, image_content, _failed in executor.map(_produce, slide_indices):
+                    results[idx] = image_content
+
+        # Reassemble in slide order, filling any failed slot from the
+        # nearest already-generated neighbour so downstream code still gets
+        # an image per slide (this mirrors the previous sequential fallback
+        # semantics).
+        from copy import deepcopy
+
+        contents: list[ImageContent] = []
+        last_successful: Optional[ImageContent] = None
+        for idx in range(max_idx):
+            if deck.slides[idx].image_url:
+                continue
+            image = results.get(idx)
+            if image is not None:
+                contents.append(image)
+                last_successful = image
+            elif last_successful is not None:
+                copy = deepcopy(last_successful)
+                copy.placeholder_id = deck.slides[idx].placeholder_id
+                contents.append(copy)
+            else:
+                logger.error(
+                    "❌ All fallback options exhausted for slide %d; skipping image",
+                    idx + 1,
+                )
 
         logger.info("📊 Total AI images generated: %d", len(contents))
         return contents
