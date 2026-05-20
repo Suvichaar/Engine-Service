@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from uuid import UUID
 
@@ -59,10 +60,26 @@ def test_create_and_get_story(client: TestClient):
     }
 
     response = client.post("/stories", json=payload)
-    assert response.status_code == 200, response.text
-    data = response.json()
-    story_id = data["id"]
+    assert response.status_code == 202, response.text
+    ack = response.json()
+    story_id = ack["id"]
     UUID(story_id)  # valid UUID
+    assert ack["status"] == "pending"
+
+    deadline = time.monotonic() + 60
+    body = None
+    final_status = None
+    while time.monotonic() < deadline:
+        status_response = client.get(f"/stories/{story_id}/status")
+        assert status_response.status_code == 200, status_response.text
+        body = status_response.json()
+        final_status = body["status"]
+        if final_status in ("completed", "failed"):
+            break
+        time.sleep(0.2)
+
+    assert final_status == "completed", body
+    assert body["story"]["id"] == story_id
 
     get_response = client.get(f"/stories/{story_id}")
     assert get_response.status_code == 200

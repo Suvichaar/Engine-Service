@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Iterable, List, Mapping, Optional, Protocol, Sequence
 from uuid import uuid4
@@ -156,12 +158,16 @@ class AIImageProvider:
     """Generate images using an AI image model."""
 
     source = "ai"
-    
-    # Class-level rate limiter: track last request time
-    _last_request_time = None
-    _min_cooldown_seconds = 5.0  # Minimum 5 seconds between requests
 
-    def __init__(self, endpoint: str, api_key: str, cooldown_seconds: float = 5.0, language_model=None) -> None:
+    # Class-level rate limiter: serialises the *kickoff* of requests across
+    # threads so concurrent generators don't burst the upstream API. The lock
+    # only covers the cooldown bookkeeping — actual HTTP calls run in parallel.
+    _last_request_time = None
+    _min_cooldown_seconds = 1.0  # spacing between request kickoffs
+    _cooldown_lock = threading.Lock()
+    _max_concurrent_requests = 2
+
+    def __init__(self, endpoint: str, api_key: str, cooldown_seconds: float = 1.0, language_model=None) -> None:
         self._endpoint = endpoint
         self._api_key = api_key
         self._min_cooldown_seconds = cooldown_seconds  # Configurable cooldown
@@ -174,18 +180,21 @@ class AIImageProvider:
         return result
 
     def _wait_for_cooldown(self):
-        """Wait if needed to respect rate limits."""
+        """Serialise request kickoffs across threads to avoid bursting."""
         import time
         logger = logging.getLogger(__name__)
-        
-        if AIImageProvider._last_request_time is not None:
-            elapsed = time.time() - AIImageProvider._last_request_time
-            if elapsed < self._min_cooldown_seconds:
-                wait_time = self._min_cooldown_seconds - elapsed
-                logger.info(f"⏳ Rate limiting: waiting {wait_time:.1f} seconds before next request...")
-                time.sleep(wait_time)
-        
-        AIImageProvider._last_request_time = time.time()
+
+        with AIImageProvider._cooldown_lock:
+            if AIImageProvider._last_request_time is not None:
+                elapsed = time.time() - AIImageProvider._last_request_time
+                if elapsed < self._min_cooldown_seconds:
+                    wait_time = self._min_cooldown_seconds - elapsed
+                    logger.info(
+                        "⏳ Spacing requests: waiting %.2fs before next kickoff",
+                        wait_time,
+                    )
+                    time.sleep(wait_time)
+            AIImageProvider._last_request_time = time.time()
 
     # Prompt generation methods now delegate to image_prompts module
     def _sanitize_prompt(self, text: str) -> str:
@@ -315,12 +324,11 @@ Return only the English description that captures the visual essence, no quotes 
             return "Visual concept"
 
     def generate(self, deck: SlideDeck, payload: IntakePayload) -> Sequence[ImageContent]:
-        contents: list[ImageContent] = []
         prompt_keywords = ", ".join(payload.prompt_keywords) if payload.prompt_keywords else "story"
-        user_provided_keywords = payload.prompt_keywords and len(payload.prompt_keywords) > 0
-        
+        user_provided_keywords = bool(payload.prompt_keywords and len(payload.prompt_keywords) > 0)
+
         # For Curious mode, extract alt text from narrative JSON in payload metadata
-        alt_texts = {}
+        alt_texts: dict = {}
         logger = logging.getLogger(__name__)
         if payload.mode == Mode.CURIOUS:
             logger.debug(f"Curious mode: metadata exists={bool(payload.metadata)}, image_source={payload.image_source}")
@@ -328,114 +336,103 @@ Return only the English description that captures the visual essence, no quotes 
                 narrative_json = payload.metadata.get("narrative_json")
                 logger.debug(f"Narrative JSON exists: {bool(narrative_json)}, type: {type(narrative_json)}")
                 if narrative_json and isinstance(narrative_json, dict):
-                    # Extract alt texts: s0alt1 (cover), s1alt1, s2alt1, etc.
                     for i in range(len(deck.slides)):
                         alt_key = "s0alt1" if i == 0 else f"s{i}alt1"
                         if alt_key in narrative_json and narrative_json[alt_key]:
                             alt_texts[i] = narrative_json[alt_key]
                             logger.debug(f"Extracted alt text for slide {i} ({alt_key}): {narrative_json[alt_key][:80]}...")
-                    
-                    # Extract CTA alt text specifically
                     if "ctaalt1" in narrative_json and narrative_json["ctaalt1"]:
                         alt_texts["cta"] = narrative_json["ctaalt1"]
                         logger.debug(f"Extracted alt text for CTA slide: {alt_texts['cta'][:80]}...")
-                    
                     logger.info(f"Extracted {len(alt_texts)} alt texts for {len(deck.slides)} slides + CTA")
-            
-            # If alt_texts not found, generate them automatically IF no user keywords provided
+
             if not alt_texts and self._language_model and not user_provided_keywords:
                 logger.info("🔄 Alt texts not found in narrative_json, generating automatically from slide content...")
                 alt_texts = self._generate_alt_texts_for_slides(deck.slides, payload)
-        
-        # Calculate total slides needed (deck slides + 1 CTA slide for Curious mode)
-        total_slides_needed = len(deck.slides) + (1 if payload.mode == Mode.CURIOUS else 0)
-        logger.info(f"🔄 Generating images for {len(deck.slides)} slides {'+ 1 CTA' if payload.mode == Mode.CURIOUS else ''} ({total_slides_needed} total)")
-        
-        import time
-        last_successful_image = None
-        
-        # 1. Generate images for all deck slides
+
+        # Pre-build the list of image tasks (deck slides + optional CTA).
+        # Each task is dispatched independently to the worker pool so they
+        # can run in parallel while we still reassemble the final list in
+        # slot order at the end.
+        from app.services.image_prompts import generate_curious_slide_prompt
+
+        tasks: list[tuple[int, str, str]] = []  # (slot, placeholder_id, prompt)
+
         for idx, slide in enumerate(deck.slides):
             if slide.image_url:
                 continue
-            
-            # Rate limit protection (8s delay except for first slide)
-            if idx > 0:
-                time.sleep(8.0)
-            
-            # PROMPT PRIORITY:
-            # 1. Alt-text from metadata/auto-gen (if available)
-            # 2. User-provided keywords + Slide text
-            # 3. Slide text alone
-            
-            prompt = ""
             if idx in alt_texts:
                 prompt = alt_texts[idx]
                 logger.info(f"📝 Using pre-extracted alt-text for slide {idx}: {prompt[:100]}...")
             elif user_provided_keywords:
-                # User keywords + slide text (translated if needed)
-                english_desc = self._convert_to_english_fallback(slide.text or 'Learning', payload)
-                from app.services.image_prompts import generate_curious_slide_prompt
+                english_desc = self._convert_to_english_fallback(slide.text or "Learning", payload)
                 base_prompt = generate_curious_slide_prompt(english_desc, is_cover=(idx == 0))
                 prompt = f"{base_prompt} | keywords: {prompt_keywords}"
                 logger.info(f"📝 Using user keywords for slide {idx}: {prompt_keywords}")
             else:
-                # Fallback to slide text (translated if needed)
-                prompt = self._convert_to_english_fallback(slide.text or 'Visual concept', payload)
+                prompt = self._convert_to_english_fallback(slide.text or "Visual concept", payload)
                 if not prompt or prompt == "Visual concept":
-                    from app.services.image_prompts import generate_curious_slide_prompt
-                    prompt = generate_curious_slide_prompt('Education', is_cover=(idx == 0))
+                    prompt = generate_curious_slide_prompt("Education", is_cover=(idx == 0))
                 logger.info(f"📝 Using slide text fallback for slide {idx}: {prompt[:100]}...")
+            tasks.append((idx, slide.placeholder_id, prompt))
 
-            try:
-                logger.debug(f"🖼️ Requesting image for slide {idx} with prompt: {prompt[:150]}...")
-                image_content = self._generate_image(slide.placeholder_id, prompt)
-                contents.append(image_content)
-                last_successful_image = image_content
-            except Exception as exc:
-                logger.error(f"❌ Image generation failed for slide {idx}: {exc}")
-                if last_successful_image:
-                    logger.info(f"🔄 Using last successful image fallback for slide {idx}")
-                    from copy import deepcopy
-                    fallback = deepcopy(last_successful_image)
-                    fallback.placeholder_id = slide.placeholder_id
-                    contents.append(fallback)
-                else:
-                    # Generic safe fallback or skip
-                    logger.warning(f"⚠️ No fallback image available for slide {idx}; skipping image")
-
-        # 2. Generate image for CTA slide (Curious mode only)
+        cta_slot = None
         if payload.mode == Mode.CURIOUS:
-            # Cooldown delay
-            time.sleep(8.0)
-            cta_placeholder_id = "cta-slide"
-            
-            # CTA Prompt Priority:
-            # 1. Alt-text 'cta' from metadata
-            # 2. User Keywords
-            # 3. Generic Curious CTA prompt
-            prompt = ""
+            cta_slot = len(deck.slides)  # CTA always sits after deck slides
             if "cta" in alt_texts:
-                prompt = alt_texts["cta"]
-                logger.info(f"📝 Using pre-extracted alt-text for CTA slide: {prompt[:100]}...")
+                cta_prompt = alt_texts["cta"]
+                logger.info(f"📝 Using pre-extracted alt-text for CTA slide: {cta_prompt[:100]}...")
             elif user_provided_keywords:
-                prompt = f"Educational concept of growth and learning | keywords: {prompt_keywords}"
+                cta_prompt = f"Educational concept of growth and learning | keywords: {prompt_keywords}"
             else:
-                from app.services.image_prompts import generate_curious_slide_prompt
-                prompt = generate_curious_slide_prompt("Universal learning and growth", is_cover=False)
-            
+                cta_prompt = generate_curious_slide_prompt("Universal learning and growth", is_cover=False)
+            tasks.append((cta_slot, "cta-slide", cta_prompt))
+
+        logger.info(
+            "🎨 Generating Curious AI images concurrently: tasks=%d concurrency=%d",
+            len(tasks),
+            self._max_concurrent_requests,
+        )
+
+        def _produce(task):
+            slot, placeholder_id, prompt = task
             try:
-                logger.info(f"🖼️ Generating CTA image with prompt: {prompt[:150]}...")
-                cta_image = self._generate_image(cta_placeholder_id, prompt)
-                contents.append(cta_image)
-            except Exception as cta_exc:
-                logger.error(f"❌ CTA image generation failed: {cta_exc}")
-                if last_successful_image:
-                    from copy import deepcopy
-                    cta_fallback = deepcopy(last_successful_image)
-                    cta_fallback.placeholder_id = cta_placeholder_id
-                    contents.append(cta_fallback)
-        
+                logger.debug(f"🖼️ Requesting image for slot {slot} with prompt: {prompt[:150]}...")
+                image_content = self._generate_image(placeholder_id, prompt)
+                logger.info("✅ Generated image for slot %d", slot)
+                return slot, placeholder_id, image_content
+            except Exception as exc:
+                logger.error(f"❌ Image generation failed for slot {slot}: {exc}")
+                return slot, placeholder_id, None
+
+        results: dict[int, tuple[str, Optional[ImageContent]]] = {}
+        if tasks:
+            with ThreadPoolExecutor(
+                max_workers=self._max_concurrent_requests,
+                thread_name_prefix="ai-image",
+            ) as executor:
+                for slot, placeholder_id, image_content in executor.map(_produce, tasks):
+                    results[slot] = (placeholder_id, image_content)
+
+        # Reassemble in original slot order, falling back to the nearest
+        # already-generated neighbour when a single slot failed.
+        from copy import deepcopy
+
+        contents: list[ImageContent] = []
+        last_successful: Optional[ImageContent] = None
+        for slot in sorted(results.keys()):
+            placeholder_id, image = results[slot]
+            if image is not None:
+                contents.append(image)
+                last_successful = image
+            elif last_successful is not None:
+                logger.info(f"🔄 Using last successful image fallback for slot {slot}")
+                copy = deepcopy(last_successful)
+                copy.placeholder_id = placeholder_id
+                contents.append(copy)
+            else:
+                logger.warning(f"⚠️ No fallback image available for slot {slot}; skipping image")
+
         return contents
 
     def _generate_image(self, placeholder_id: str, prompt: str, retry_count: int = 3) -> ImageContent:
