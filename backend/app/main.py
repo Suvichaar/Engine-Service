@@ -93,16 +93,38 @@ _memory_log_handler.setLevel(logging.INFO)
 logging.getLogger().addHandler(_memory_log_handler)
 
 import httpx
-from fastapi import Body, Depends, FastAPI, HTTPException
+from fastapi import Body, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.schemas import (
+    LoginRequest,
     PromptActivateRequest,
     PromptCreateRequest,
     PromptListingResponse,
     PromptUpdateRequest,
     PromptVersionResponse,
+    PublishHistoryResponse,
+    PublishRequest,
+    PublishResponse,
+    BroadcastHistoryResponse,
+    BroadcastRequest,
+    BroadcastResponse,
+    StoryListItem,
+    StoryListResponse,
+    StoryboardBulkCreateRequest,
+    StoryboardBulkCreateResponse,
+    StoryboardCreateRequest,
+    StoryboardItem,
+    StoryboardListResponse,
+    StoryboardUpdateRequest,
+    SubscriberBulkCreateRequest,
+    SubscriberBulkCreateResponse,
+    SubscriberCreateRequest,
+    SubscriberItem,
+    SubscriberListResponse,
+    SubscriberTagsResponse,
+    SubscriberUpdateRequest,
     TemplateActivateRequest,
     TemplateCreateRequest,
     TemplateListingResponse,
@@ -112,15 +134,36 @@ from app.api.schemas import (
     StoryJobAck,
     StoryJobStatusResponse,
     StoryResponse,
+    TokenResponse,
+    UserResponse,
 )
 from app.core import get_settings
+from app.core.auth import (
+    CurrentUser,
+    create_access_token,
+    get_auth_config,
+    get_current_user,
+    verify_password,
+)
 from app.domain.dto import AttachmentDescriptor, Mode
 from app.domain.interfaces import ModelClient, PromptTemplateService
+from app.services.broadcast import BroadcastService, RecipientRef
 from app.persistence import (
     Base,
+    SqlAlchemyBroadcastRepository,
+    SqlAlchemyPublishRepository,
     SqlAlchemyStoryRepository,
+    SqlAlchemyStoryboardRepository,
+    SqlAlchemySubscriberRepository,
+    StoryboardNotFound,
+    StoryboardSlugTaken,
+    SubscriberNotFound,
     create_session_factory,
+    ensure_broadcast_schema,
+    ensure_publish_schema,
     ensure_story_schema,
+    ensure_storyboard_schema,
+    ensure_subscriber_schema,
 )
 from app.services.analysis import CompositeAnalysisFacade, HeuristicFunctionAnalyzer, PromptRecommendationAnalyzer
 from app.services.document_intelligence import (
@@ -269,6 +312,10 @@ def get_session_factory():
         engine = factory.kw["bind"]
         Base.metadata.create_all(engine)
         ensure_story_schema(engine)
+        ensure_publish_schema(engine)
+        ensure_storyboard_schema(engine)
+        ensure_broadcast_schema(engine)
+        ensure_subscriber_schema(engine)
         return factory
     except Exception as e:
         # Database connection failed - return None to skip database
@@ -884,6 +931,834 @@ def delete_prompt_version(
     except PromptManagementError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "deleted"}
+
+
+def get_publish_repository() -> Optional[SqlAlchemyPublishRepository]:
+    """Return a publish repo backed by the configured DB, or None when no DB."""
+    factory = get_session_factory()
+    if factory is None:
+        return None
+    return SqlAlchemyPublishRepository(factory)
+
+
+def get_story_repository() -> Optional[SqlAlchemyStoryRepository]:
+    """Return a story repo backed by the configured DB, or None when no DB."""
+    factory = get_session_factory()
+    if factory is None:
+        return None
+    return SqlAlchemyStoryRepository(factory)
+
+
+# ── Auth endpoints ───────────────────────────────────────────────────────────
+
+
+@app.post("/auth/login", response_model=TokenResponse)
+def auth_login(payload: LoginRequest):
+    cfg = get_auth_config()
+    if not cfg.configured:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Auth is not configured on the server. "
+                "Set ADMIN_EMAIL, ADMIN_PASSWORD_HASH, and JWT_SECRET."
+            ),
+        )
+
+    submitted_email = (payload.email or "").strip().lower()
+    if submitted_email != cfg.admin_email or not verify_password(payload.password, cfg.admin_password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+
+    token = create_access_token(subject=cfg.admin_email)
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        expires_in=cfg.jwt_expires_minutes * 60,
+        user=UserResponse(email=cfg.admin_email, role="admin"),
+    )
+
+
+@app.get("/auth/me", response_model=UserResponse)
+def auth_me(current: CurrentUser = Depends(get_current_user)):
+    return UserResponse(email=current.email, role=current.role)
+
+
+# ── Stories listing ──────────────────────────────────────────────────────────
+
+
+@app.get("/stories", response_model=StoryListResponse)
+def list_stories(
+    mode: Optional[str] = None,
+    category: Optional[str] = None,
+    q: Optional[str] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    limit: int = 50,
+    offset: int = 0,
+    _user: CurrentUser = Depends(get_current_user),
+):
+    """List stored stories with filters and pagination."""
+    repo = get_story_repository()
+    if repo is None:
+        return StoryListResponse(items=[], total=0, limit=limit, offset=offset)
+
+    safe_limit = max(1, min(limit, 200))
+    safe_offset = max(0, offset)
+    rows, total = repo.list_summary(
+        mode=mode,
+        category=category,
+        q=q,
+        date_from=date_from,
+        date_to=date_to,
+        limit=safe_limit,
+        offset=safe_offset,
+    )
+    items = [
+        StoryListItem(
+            id=row.id,
+            title=row.title,
+            mode=row.mode,
+            category=row.category,
+            input_language=row.input_language,
+            slide_count=row.slide_count,
+            template_key=row.template_key,
+            canurl=row.canurl,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+    return StoryListResponse(items=items, total=total, limit=safe_limit, offset=safe_offset)
+
+
+# ── Publish ──────────────────────────────────────────────────────────────────
+
+
+@app.post("/stories/{story_id}/publish", response_model=PublishResponse)
+def publish_story(
+    story_id: str,
+    payload: PublishRequest,
+    current: CurrentUser = Depends(get_current_user),
+    orchestrator: StoryOrchestrator = Depends(get_orchestrator),
+):
+    publish_repo = get_publish_repository()
+    if publish_repo is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Database is not configured; cannot record publish events.",
+        )
+
+    # Validate inputs
+    if payload.target == "webhook" and not (payload.webhook_url or "").strip():
+        raise HTTPException(status_code=400, detail="webhook_url is required when target is 'webhook'.")
+
+    # Ensure story exists before recording a publish.
+    try:
+        orchestrator.get_story(story_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Story not found.") from exc
+
+    event = publish_repo.record(
+        story_id=story_id,
+        target=payload.target,
+        status="success",
+        published_by=current.email,
+        webhook_url=payload.webhook_url,
+        error=None,
+    )
+    return PublishResponse(
+        id=event.id,
+        story_id=event.story_id,
+        target=event.target,
+        status=event.status,
+        webhook_url=event.webhook_url,
+        error=event.error,
+        published_by=event.published_by,
+        published_at=event.published_at,
+    )
+
+
+@app.get("/stories/{story_id}/publishes", response_model=PublishHistoryResponse)
+def list_publishes(
+    story_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+):
+    publish_repo = get_publish_repository()
+    if publish_repo is None:
+        return PublishHistoryResponse(items=[])
+
+    events = publish_repo.list_for_story(story_id)
+    return PublishHistoryResponse(
+        items=[
+            {
+                "id": event.id,
+                "story_id": event.story_id,
+                "target": event.target,
+                "status": event.status,
+                "webhook_url": event.webhook_url,
+                "error": event.error,
+                "published_by": event.published_by,
+                "published_at": event.published_at,
+            }
+            for event in events
+        ]
+    )
+
+
+# ── Broadcast endpoints ──────────────────────────────────────────────────────
+
+
+def get_broadcast_repository() -> Optional[SqlAlchemyBroadcastRepository]:
+    factory = get_session_factory()
+    if factory is None:
+        return None
+    return SqlAlchemyBroadcastRepository(factory)
+
+
+@lru_cache(maxsize=1)
+def get_broadcast_service() -> BroadcastService:
+    return BroadcastService()
+
+
+def _story_title(story_record) -> str:
+    deck = getattr(story_record, "slide_deck", None)
+    if deck is not None:
+        cover = getattr(deck, "cover", None)
+        if cover is not None:
+            title = getattr(cover, "title", None) or getattr(cover, "heading", None)
+            if title:
+                return str(title)
+    return getattr(story_record, "category", None) or "Suvichaar story"
+
+
+@app.post("/stories/{story_id}/broadcast", response_model=BroadcastResponse)
+def broadcast_story(
+    story_id: str,
+    payload: BroadcastRequest,
+    current: CurrentUser = Depends(get_current_user),
+    orchestrator: StoryOrchestrator = Depends(get_orchestrator),
+    service: BroadcastService = Depends(get_broadcast_service),
+):
+    broadcast_repo = get_broadcast_repository()
+    if broadcast_repo is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Database is not configured; cannot record broadcast events.",
+        )
+
+    try:
+        story_record = orchestrator.get_story(story_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Story not found.") from exc
+
+    story_url = str(story_record.canurl or story_record.canurl1 or "")
+    if not story_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Story has no shareable URL (canurl/canurl1 missing).",
+        )
+
+    story_title = _story_title(story_record)
+
+    # Filter recipients so each channel sees only contacts that can be reached.
+    requested: List[RecipientRef] = [
+        RecipientRef(phone=r.phone, email=r.email, name=r.name)
+        for r in payload.recipients
+        if r.phone or r.email
+    ]
+
+    # When `audience_tag` is set, pull active subscribers carrying that tag and
+    # merge them in. De-dup by phone first, then by email — so an explicit
+    # recipient with the same phone as a tagged subscriber is not sent twice.
+    if payload.audience_tag:
+        sub_repo = get_subscriber_repository()
+        if sub_repo is not None:
+            seen_phones = {r.phone for r in requested if r.phone}
+            seen_emails = {r.email for r in requested if r.email}
+            for sub in sub_repo.find_by_tag(payload.audience_tag):
+                if sub.phone and sub.phone in seen_phones:
+                    continue
+                if sub.email and sub.email in seen_emails:
+                    continue
+                if not (sub.phone or sub.email):
+                    continue
+                requested.append(RecipientRef(phone=sub.phone, email=sub.email, name=sub.name))
+                if sub.phone:
+                    seen_phones.add(sub.phone)
+                if sub.email:
+                    seen_emails.add(sub.email)
+
+    if not requested:
+        raise HTTPException(
+            status_code=400,
+            detail="No recipients resolved (no explicit list and no subscribers match the audience tag).",
+        )
+
+    result = service.broadcast(
+        story_title=story_title,
+        story_url=story_url,
+        channels=list(payload.channels),
+        recipients=requested,
+        message=payload.message,
+    )
+
+    recipients_dump = [
+        {"phone": r.phone, "email": r.email, "name": r.name} for r in requested
+    ]
+    outcomes_dump = [
+        {"channel": o.channel, "recipient": o.recipient, "status": o.status, "error": o.error}
+        for o in result.outcomes
+    ]
+    event = broadcast_repo.record(
+        story_id=story_id,
+        channels=list(payload.channels),
+        status=result.status,
+        recipients=recipients_dump,
+        outcomes=outcomes_dump,
+        total_count=result.total,
+        sent_count=result.sent,
+        failed_count=result.failed,
+        triggered_by=current.email,
+        audience_tag=payload.audience_tag,
+        message=payload.message,
+    )
+    return BroadcastResponse(
+        id=event.id,
+        story_id=event.story_id,
+        channels=event.channels,
+        status=event.status,
+        audience_tag=event.audience_tag,
+        message=event.message,
+        total_count=event.total_count,
+        sent_count=event.sent_count,
+        failed_count=event.failed_count,
+        triggered_by=event.triggered_by,
+        created_at=event.created_at,
+        updated_at=event.updated_at,
+        outcomes=event.outcomes,
+    )
+
+
+@app.get(
+    "/stories/{story_id}/broadcasts",
+    response_model=BroadcastHistoryResponse,
+)
+def list_broadcasts(
+    story_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+):
+    broadcast_repo = get_broadcast_repository()
+    if broadcast_repo is None:
+        return BroadcastHistoryResponse(items=[])
+    events = broadcast_repo.list_for_story(story_id)
+    return BroadcastHistoryResponse(
+        items=[
+            {
+                "id": e.id,
+                "story_id": e.story_id,
+                "channels": e.channels,
+                "status": e.status,
+                "audience_tag": e.audience_tag,
+                "message": e.message,
+                "total_count": e.total_count,
+                "sent_count": e.sent_count,
+                "failed_count": e.failed_count,
+                "triggered_by": e.triggered_by,
+                "created_at": e.created_at,
+                "updated_at": e.updated_at,
+                "outcomes": e.outcomes,
+            }
+            for e in events
+        ]
+    )
+
+
+# ── Razorpay webhook ─────────────────────────────────────────────────────────
+
+
+def _razorpay_signature_ok(body: bytes, signature: str, secret: str) -> bool:
+    import hashlib
+    import hmac
+
+    if not signature or not secret:
+        return False
+    expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
+def _extract_razorpay_subscriber(event: dict) -> dict:
+    """Pull phone/email/name/tags + subscription summary from a Razorpay event.
+
+    Razorpay puts most contact info under either `payment.entity` (for
+    `payment.captured`) or `subscription.entity` (for subscription events).
+    Tags are expected to be passed via Razorpay `notes` (the labs subscribe
+    page should populate `notes.tags = "tag1,tag2"` at checkout time).
+    """
+    payload = (event.get("payload") or {})
+    entity_root: dict = {}
+    event_name = (event.get("event") or "").lower()
+
+    for key in ("payment", "subscription", "order"):
+        ent = (payload.get(key) or {}).get("entity") or {}
+        if ent:
+            entity_root = ent
+            break
+
+    notes = entity_root.get("notes") or {}
+    if not isinstance(notes, dict):
+        notes = {}
+
+    phone = (
+        entity_root.get("contact")
+        or notes.get("phone")
+        or notes.get("mobile")
+        or ""
+    )
+    email = entity_root.get("email") or notes.get("email") or ""
+    name = (
+        entity_root.get("name")
+        or notes.get("name")
+        or notes.get("full_name")
+        or ""
+    )
+
+    raw_tags = notes.get("tags") or notes.get("categories") or ""
+    if isinstance(raw_tags, str):
+        tags = [t.strip() for t in raw_tags.replace(";", ",").split(",") if t.strip()]
+    elif isinstance(raw_tags, list):
+        tags = [str(t).strip() for t in raw_tags if str(t).strip()]
+    else:
+        tags = []
+
+    subscription = {
+        "event": event_name,
+        "razorpay_payment_id": entity_root.get("id") if "payment" in event_name else entity_root.get("payment_id"),
+        "razorpay_order_id": entity_root.get("order_id"),
+        "razorpay_subscription_id": entity_root.get("subscription_id") or (
+            entity_root.get("id") if "subscription" in event_name else None
+        ),
+        "amount": entity_root.get("amount"),
+        "currency": entity_root.get("currency"),
+        "status": entity_root.get("status"),
+        "method": entity_root.get("method"),
+        "notes": notes,
+    }
+    return {
+        "phone": (phone or "").strip() or None,
+        "email": (email or "").strip() or None,
+        "name": (name or "").strip() or None,
+        "tags": tags,
+        "subscription": subscription,
+    }
+
+
+@app.post("/webhooks/razorpay")
+async def razorpay_webhook(request: Request):
+    """Verify Razorpay HMAC and upsert subscriber on relevant events.
+
+    Always returns 200 to ack the webhook (so Razorpay does not retry storms
+    on transient downstream issues); the payload includes a `handled` flag for
+    debuggability.
+    """
+    secret = (os.getenv("RAZORPAY_WEBHOOK_SECRET") or "").strip()
+    signature = request.headers.get("x-razorpay-signature", "")
+    body = await request.body()
+
+    if not secret:
+        logger.warning("Razorpay webhook received but RAZORPAY_WEBHOOK_SECRET is unset; rejecting.")
+        raise HTTPException(status_code=503, detail="Razorpay webhook is not configured.")
+
+    if not _razorpay_signature_ok(body, signature, secret):
+        raise HTTPException(status_code=400, detail="Invalid Razorpay signature.")
+
+    try:
+        event = await request.json()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}") from exc
+
+    event_name = (event.get("event") or "").lower()
+    INTERESTED = {
+        "payment.captured",
+        "subscription.activated",
+        "subscription.charged",
+        "order.paid",
+    }
+    if event_name not in INTERESTED:
+        return JSONResponse({"handled": False, "event": event_name})
+
+    repo = get_subscriber_repository()
+    if repo is None:
+        return JSONResponse({"handled": False, "event": event_name, "reason": "no_db"})
+
+    extracted = _extract_razorpay_subscriber(event)
+    if not (extracted["phone"] or extracted["email"]):
+        return JSONResponse(
+            {"handled": False, "event": event_name, "reason": "no_contact_info"}
+        )
+
+    record = repo.upsert_from_payment(
+        phone=extracted["phone"],
+        email=extracted["email"],
+        name=extracted["name"],
+        tags=extracted["tags"],
+        subscription=extracted["subscription"],
+        source="razorpay",
+    )
+    return JSONResponse(
+        {
+            "handled": True,
+            "event": event_name,
+            "subscriber_id": str(record.id),
+        }
+    )
+
+
+# ── Subscriber endpoints ─────────────────────────────────────────────────────
+
+
+def get_subscriber_repository() -> Optional[SqlAlchemySubscriberRepository]:
+    factory = get_session_factory()
+    if factory is None:
+        return None
+    return SqlAlchemySubscriberRepository(factory)
+
+
+def _subscriber_to_item(record) -> dict:
+    return {
+        "id": record.id,
+        "name": record.name,
+        "phone": record.phone,
+        "email": record.email,
+        "tags": record.tags,
+        "subscription": record.subscription,
+        "extra": record.extra,
+        "status": record.status,
+        "source": record.source,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+
+
+@app.get("/subscribers", response_model=SubscriberListResponse)
+def list_subscribers(
+    q: Optional[str] = None,
+    tag: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    _user: CurrentUser = Depends(get_current_user),
+):
+    repo = get_subscriber_repository()
+    safe_limit = max(1, min(limit, 200))
+    safe_offset = max(0, offset)
+    if repo is None:
+        return SubscriberListResponse(items=[], total=0, limit=safe_limit, offset=safe_offset)
+    records, total = repo.list(
+        limit=safe_limit, offset=safe_offset, q=q, tag=tag, status=status
+    )
+    return SubscriberListResponse(
+        items=[_subscriber_to_item(r) for r in records],
+        total=total,
+        limit=safe_limit,
+        offset=safe_offset,
+    )
+
+
+@app.get("/subscribers/tags", response_model=SubscriberTagsResponse)
+def list_subscriber_tags(_user: CurrentUser = Depends(get_current_user)):
+    repo = get_subscriber_repository()
+    if repo is None:
+        return SubscriberTagsResponse(items=[])
+    pairs = repo.distinct_tags()
+    return SubscriberTagsResponse(
+        items=[{"tag": t, "count": c} for t, c in pairs]
+    )
+
+
+@app.post("/subscribers", response_model=SubscriberItem, status_code=201)
+def create_subscriber(
+    payload: SubscriberCreateRequest,
+    _user: CurrentUser = Depends(get_current_user),
+):
+    repo = get_subscriber_repository()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    if not payload.phone and not payload.email:
+        raise HTTPException(status_code=400, detail="phone or email is required.")
+    record = repo.create(
+        name=payload.name,
+        phone=payload.phone,
+        email=payload.email,
+        tags=payload.tags,
+        subscription=payload.subscription,
+        extra=payload.extra,
+        status=payload.status,
+        source="manual",
+    )
+    return _subscriber_to_item(record)
+
+
+@app.post(
+    "/subscribers/bulk",
+    response_model=SubscriberBulkCreateResponse,
+    status_code=201,
+)
+def bulk_create_subscribers(
+    payload: SubscriberBulkCreateRequest,
+    _user: CurrentUser = Depends(get_current_user),
+):
+    repo = get_subscriber_repository()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    rows = [
+        {
+            "name": item.name,
+            "phone": item.phone,
+            "email": item.email,
+            "tags": item.tags,
+            "subscription": item.subscription,
+            "extra": item.extra,
+            "status": item.status,
+        }
+        for item in payload.items
+    ]
+    created, errors = repo.bulk_create(rows)
+    return SubscriberBulkCreateResponse(
+        created=[_subscriber_to_item(r) for r in created],
+        errors=errors,
+        requested=len(rows),
+        succeeded=len(created),
+        failed=len(errors),
+    )
+
+
+@app.get("/subscribers/{sub_id}", response_model=SubscriberItem)
+def get_subscriber(
+    sub_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+):
+    repo = get_subscriber_repository()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    try:
+        record = repo.get(sub_id)
+    except SubscriberNotFound as exc:
+        raise HTTPException(status_code=404, detail="Subscriber not found.") from exc
+    return _subscriber_to_item(record)
+
+
+@app.put("/subscribers/{sub_id}", response_model=SubscriberItem)
+def update_subscriber(
+    sub_id: str,
+    payload: SubscriberUpdateRequest,
+    _user: CurrentUser = Depends(get_current_user),
+):
+    repo = get_subscriber_repository()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    updates = payload.model_dump(exclude_unset=True)
+    try:
+        record = repo.update(sub_id, updates=updates)
+    except SubscriberNotFound as exc:
+        raise HTTPException(status_code=404, detail="Subscriber not found.") from exc
+    return _subscriber_to_item(record)
+
+
+@app.delete("/subscribers/{sub_id}", status_code=204)
+def delete_subscriber(
+    sub_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+):
+    repo = get_subscriber_repository()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    try:
+        repo.delete(sub_id)
+    except SubscriberNotFound as exc:
+        raise HTTPException(status_code=404, detail="Subscriber not found.") from exc
+    return None
+
+
+# ── StoryBoard endpoints ─────────────────────────────────────────────────────
+
+
+def get_storyboard_repository() -> Optional[SqlAlchemyStoryboardRepository]:
+    """Return a storyboard repo backed by the configured DB, or None when no DB."""
+    factory = get_session_factory()
+    if factory is None:
+        return None
+    return SqlAlchemyStoryboardRepository(factory)
+
+
+def _record_to_item(record) -> dict:
+    return {
+        "id": record.id,
+        "title": record.title,
+        "slug": record.slug,
+        "category": record.category,
+        "tags": record.tags,
+        "cover_url": record.cover_url,
+        "media_urls": record.media_urls,
+        "language": record.language,
+        "mode": record.mode,
+        "status": record.status,
+        "source": record.source,
+        "external_id": record.external_id,
+        "notes": record.notes,
+        "created_by": record.created_by,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+
+
+@app.get("/storyboard", response_model=StoryboardListResponse)
+def list_storyboard(
+    q: Optional[str] = None,
+    category: Optional[str] = None,
+    status: Optional[str] = None,
+    tag: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    _user: CurrentUser = Depends(get_current_user),
+):
+    repo = get_storyboard_repository()
+    safe_limit = max(1, min(limit, 100))
+    safe_offset = max(0, offset)
+    if repo is None:
+        return StoryboardListResponse(items=[], total=0, limit=safe_limit, offset=safe_offset)
+    records, total = repo.list(
+        limit=safe_limit,
+        offset=safe_offset,
+        category=category,
+        status=status,
+        tag=tag,
+        q=q,
+    )
+    return StoryboardListResponse(
+        items=[_record_to_item(r) for r in records],
+        total=total,
+        limit=safe_limit,
+        offset=safe_offset,
+    )
+
+
+@app.post("/storyboard", response_model=StoryboardItem, status_code=201)
+def create_storyboard(
+    payload: StoryboardCreateRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    repo = get_storyboard_repository()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    try:
+        record = repo.create(
+            title=payload.title,
+            slug=payload.slug,
+            category=payload.category,
+            tags=payload.tags,
+            cover_url=payload.cover_url,
+            media_urls=[m.model_dump() for m in payload.media_urls],
+            language=payload.language,
+            mode=payload.mode,
+            status=payload.status,
+            source="manual",
+            external_id=payload.external_id,
+            notes=payload.notes,
+            created_by=current.email,
+        )
+    except StoryboardSlugTaken as exc:
+        raise HTTPException(status_code=409, detail=f"Slug already exists: {exc}") from exc
+    return _record_to_item(record)
+
+
+@app.post(
+    "/storyboard/bulk",
+    response_model=StoryboardBulkCreateResponse,
+    status_code=201,
+)
+def bulk_create_storyboard(
+    payload: StoryboardBulkCreateRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    repo = get_storyboard_repository()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    rows = []
+    for item in payload.items:
+        rows.append(
+            {
+                "title": item.title,
+                "slug": item.slug,
+                "category": item.category,
+                "tags": item.tags,
+                "cover_url": item.cover_url,
+                "media_urls": [m.model_dump() for m in item.media_urls],
+                "language": item.language,
+                "mode": item.mode,
+                "status": item.status,
+                "external_id": item.external_id,
+                "notes": item.notes,
+            }
+        )
+    created, errors = repo.bulk_create(rows, created_by=current.email)
+    return StoryboardBulkCreateResponse(
+        created=[_record_to_item(r) for r in created],
+        errors=errors,
+        requested=len(rows),
+        succeeded=len(created),
+        failed=len(errors),
+    )
+
+
+@app.get("/storyboard/{board_id}", response_model=StoryboardItem)
+def get_storyboard(
+    board_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+):
+    repo = get_storyboard_repository()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    try:
+        record = repo.get(board_id)
+    except StoryboardNotFound as exc:
+        raise HTTPException(status_code=404, detail="Storyboard not found.") from exc
+    return _record_to_item(record)
+
+
+@app.put("/storyboard/{board_id}", response_model=StoryboardItem)
+def update_storyboard(
+    board_id: str,
+    payload: StoryboardUpdateRequest,
+    _user: CurrentUser = Depends(get_current_user),
+):
+    repo = get_storyboard_repository()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    updates = payload.model_dump(exclude_unset=True)
+    if "media_urls" in updates and updates["media_urls"] is not None:
+        updates["media_urls"] = [
+            m if isinstance(m, dict) else m.model_dump() for m in updates["media_urls"]
+        ]
+    try:
+        record = repo.update(board_id, updates=updates)
+    except StoryboardNotFound as exc:
+        raise HTTPException(status_code=404, detail="Storyboard not found.") from exc
+    except StoryboardSlugTaken as exc:
+        raise HTTPException(status_code=409, detail=f"Slug already exists: {exc}") from exc
+    return _record_to_item(record)
+
+
+@app.delete("/storyboard/{board_id}", status_code=204)
+def delete_storyboard(
+    board_id: str,
+    _user: CurrentUser = Depends(get_current_user),
+):
+    repo = get_storyboard_repository()
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    try:
+        repo.delete(board_id)
+    except StoryboardNotFound as exc:
+        raise HTTPException(status_code=404, detail="Storyboard not found.") from exc
+    return None
 
 
 @app.get("/health")

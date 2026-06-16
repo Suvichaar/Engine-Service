@@ -89,6 +89,16 @@ class StoryCreateRequest(BaseModel):
     )
     prompt_keywords: List[str] = Field(default_factory=list)
     image_source: Optional[str] = Field(default=None, examples=["ai"])
+    image_style: Optional[str] = Field(
+        default=None,
+        description="Optional AI image style: vector, realistic, cinematic, editorial, watercolor, or minimal.",
+        examples=["realistic"],
+    )
+    image_model: Optional[str] = Field(
+        default=None,
+        description="Optional AI image model: flux_2, mai_2, or gpt_image_15. Defaults to flux_2.",
+        examples=["flux_2"],
+    )
     voice_engine: Optional[str] = Field(default=None, examples=["elevenlabs_pro"])
     voice_id: Optional[str] = Field(default=None, examples=["yD0Zg2jxgfQLY8I2MEHO"])
 
@@ -221,3 +231,291 @@ class TemplateUpdateRequest(BaseModel):
 class TemplateActivateRequest(BaseModel):
     key: str = Field(min_length=1, max_length=120)
     version: str = Field(min_length=1, max_length=40)
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(examples=["admin@suvichaar.org"])
+    password: str = Field(min_length=1)
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    expires_in: int = Field(description="Seconds until the token expires.")
+    user: "UserResponse"
+
+
+class UserResponse(BaseModel):
+    email: str
+    role: str = "admin"
+
+
+# ── Stories listing ───────────────────────────────────────────────────────────
+
+
+class StoryListItem(BaseModel):
+    id: UUID
+    title: Optional[str] = None
+    mode: str
+    category: Optional[str] = None
+    input_language: Optional[str] = None
+    slide_count: int
+    template_key: str
+    canurl: Optional[str] = None
+    created_at: datetime
+
+
+class StoryListResponse(BaseModel):
+    items: List[StoryListItem] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
+# ── Publish ───────────────────────────────────────────────────────────────────
+
+
+PublishTarget = Literal["suvichaar_live", "webhook"]
+PublishStatus = Literal["success", "failed", "pending"]
+
+
+class PublishRequest(BaseModel):
+    target: PublishTarget
+    webhook_url: Optional[str] = Field(
+        default=None,
+        description="Required when target is 'webhook'.",
+        examples=["https://example.com/incoming/suvichaar"],
+    )
+
+
+class PublishHistoryItem(BaseModel):
+    id: UUID
+    story_id: UUID
+    target: PublishTarget
+    status: PublishStatus
+    webhook_url: Optional[str] = None
+    error: Optional[str] = None
+    published_by: str
+    published_at: datetime
+
+
+class PublishResponse(PublishHistoryItem):
+    """Response returned when a publish action succeeds."""
+
+    pass
+
+
+class PublishHistoryResponse(BaseModel):
+    items: List[PublishHistoryItem] = Field(default_factory=list)
+
+
+# ── StoryBoard ────────────────────────────────────────────────────────────────
+
+
+StoryboardStatus = Literal["draft", "published", "archived"]
+StoryboardSource = Literal["manual", "bulk_csv", "strapi", "api"]
+
+
+class StoryboardMediaItem(BaseModel):
+    url: str = Field(min_length=1)
+    type: Literal["image", "video", "audio"] = "image"
+    alt: Optional[str] = None
+    caption: Optional[str] = None
+
+
+class StoryboardBase(BaseModel):
+    title: str = Field(min_length=1, max_length=512)
+    slug: str = Field(min_length=1, max_length=256, pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$")
+    category: Optional[str] = Field(default=None, max_length=128)
+    tags: List[str] = Field(default_factory=list)
+    cover_url: Optional[str] = None
+    media_urls: List[StoryboardMediaItem] = Field(default_factory=list)
+    language: Optional[str] = Field(default=None, max_length=16)
+    mode: Optional[Literal["news", "curious"]] = None
+    status: StoryboardStatus = "draft"
+    external_id: Optional[str] = Field(default=None, max_length=128)
+    notes: Optional[str] = None
+
+
+class StoryboardCreateRequest(StoryboardBase):
+    pass
+
+
+class StoryboardUpdateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=512)
+    slug: Optional[str] = Field(
+        default=None, min_length=1, max_length=256, pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$"
+    )
+    category: Optional[str] = Field(default=None, max_length=128)
+    tags: Optional[List[str]] = None
+    cover_url: Optional[str] = None
+    media_urls: Optional[List[StoryboardMediaItem]] = None
+    language: Optional[str] = Field(default=None, max_length=16)
+    mode: Optional[Literal["news", "curious"]] = None
+    status: Optional[StoryboardStatus] = None
+    external_id: Optional[str] = Field(default=None, max_length=128)
+    notes: Optional[str] = None
+
+
+class StoryboardItem(StoryboardBase):
+    id: UUID
+    source: StoryboardSource
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class StoryboardListResponse(BaseModel):
+    items: List[StoryboardItem] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
+class StoryboardBulkCreateRequest(BaseModel):
+    items: List[StoryboardCreateRequest] = Field(min_length=1, max_length=500)
+
+
+class StoryboardBulkCreateResponse(BaseModel):
+    created: List[StoryboardItem] = Field(default_factory=list)
+    errors: List[dict] = Field(default_factory=list)
+    requested: int
+    succeeded: int
+    failed: int
+
+
+# ── Broadcast ────────────────────────────────────────────────────────────────
+
+
+BroadcastChannel = Literal["whatsapp", "email"]
+BroadcastStatus = Literal["queued", "partial", "sent", "failed"]
+
+
+class BroadcastRecipient(BaseModel):
+    phone: Optional[str] = Field(default=None, max_length=32)
+    email: Optional[str] = Field(default=None, max_length=255)
+    name: Optional[str] = Field(default=None, max_length=255)
+    tags: List[str] = Field(default_factory=list)
+
+    @field_validator("phone", "email", mode="before")
+    @classmethod
+    def _strip(cls, value):
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class BroadcastRequest(BaseModel):
+    channels: List[BroadcastChannel] = Field(min_length=1)
+    recipients: List[BroadcastRecipient] = Field(default_factory=list)
+    audience_tag: Optional[str] = Field(default=None, max_length=128)
+    message: Optional[str] = Field(default=None, max_length=4000)
+
+
+class BroadcastOutcome(BaseModel):
+    channel: BroadcastChannel
+    recipient: str
+    status: Literal["sent", "failed", "queued"]
+    error: Optional[str] = None
+
+
+class BroadcastHistoryItem(BaseModel):
+    id: UUID
+    story_id: UUID
+    channels: List[BroadcastChannel]
+    status: BroadcastStatus
+    audience_tag: Optional[str] = None
+    message: Optional[str] = None
+    total_count: int
+    sent_count: int
+    failed_count: int
+    triggered_by: str
+    created_at: datetime
+    updated_at: datetime
+    outcomes: List[BroadcastOutcome] = Field(default_factory=list)
+
+
+class BroadcastResponse(BroadcastHistoryItem):
+    pass
+
+
+class BroadcastHistoryResponse(BaseModel):
+    items: List[BroadcastHistoryItem] = Field(default_factory=list)
+
+
+# ── Subscribers ──────────────────────────────────────────────────────────────
+
+
+SubscriberStatus = Literal["active", "inactive", "cancelled"]
+SubscriberSource = Literal["manual", "bulk_csv", "razorpay", "labs_subscribe", "api"]
+
+
+class SubscriberBase(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=255)
+    phone: Optional[str] = Field(default=None, max_length=32)
+    email: Optional[str] = Field(default=None, max_length=255)
+    tags: List[str] = Field(default_factory=list)
+    subscription: dict = Field(default_factory=dict)
+    extra: dict = Field(default_factory=dict)
+    status: SubscriberStatus = "active"
+
+    @field_validator("phone", "email", "name", mode="before")
+    @classmethod
+    def _strip(cls, value):
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class SubscriberCreateRequest(SubscriberBase):
+    pass
+
+
+class SubscriberUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=255)
+    phone: Optional[str] = Field(default=None, max_length=32)
+    email: Optional[str] = Field(default=None, max_length=255)
+    tags: Optional[List[str]] = None
+    subscription: Optional[dict] = None
+    extra: Optional[dict] = None
+    status: Optional[SubscriberStatus] = None
+
+
+class SubscriberItem(SubscriberBase):
+    id: UUID
+    source: SubscriberSource
+    created_at: datetime
+    updated_at: datetime
+
+
+class SubscriberListResponse(BaseModel):
+    items: List[SubscriberItem] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
+class SubscriberBulkCreateRequest(BaseModel):
+    items: List[SubscriberCreateRequest] = Field(min_length=1, max_length=1000)
+
+
+class SubscriberBulkCreateResponse(BaseModel):
+    created: List[SubscriberItem] = Field(default_factory=list)
+    errors: List[dict] = Field(default_factory=list)
+    requested: int
+    succeeded: int
+    failed: int
+
+
+class SubscriberTagItem(BaseModel):
+    tag: str
+    count: int
+
+
+class SubscriberTagsResponse(BaseModel):
+    items: List[SubscriberTagItem] = Field(default_factory=list)

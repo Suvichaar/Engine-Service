@@ -72,3 +72,22 @@ Desktop.ini
 # Streamlit
 .streamlit/
 
+# Sibling projects — only News backend should be in the build context
+Curious-service/
+Suvichaar-Storygenerator/
+SuvichaarAdmin/
+node_modules/
+
+# Frontend artifacts
+.next/
+out/
+
+# Misc large
+_archive/
+docs/
+*.JPG
+*.jpg
+*.png
+!backend/**/*.png
+*.csv
+

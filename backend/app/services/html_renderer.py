@@ -6,7 +6,7 @@ import base64
 import json
 import logging
 import re
-from datetime import timezone
+from datetime import timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -19,6 +19,8 @@ from app.domain.dto import ImageAsset, Mode, SlideBlock, SlideDeck, StoryRecord,
 from app.services.template_registry import get_template_definition
 from app.services.template_slide_generators import get_slide_generator
 from app.services.model_clients import LanguageModel
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 class TemplateLoader:
@@ -359,12 +361,12 @@ class PlaceholderMapper:
         # URLs
         placeholders["canurl"] = str(record.canurl) if record.canurl else ""
         placeholders["canurl1"] = str(record.canurl1) if record.canurl1 else ""
-        # Keep ISO timestamps for metadata/structured data, but also provide a UI-friendly display value.
-        created_at_utc = record.created_at.astimezone(timezone.utc)
-        iso_time = created_at_utc.isoformat().replace("+00:00", "Z")
+        # Keep ISO timestamps for metadata/structured data in IST, and provide a UI-friendly display value.
+        created_at_ist = record.created_at.astimezone(IST) if record.created_at.tzinfo else record.created_at.replace(tzinfo=timezone.utc).astimezone(IST)
+        iso_time = created_at_ist.isoformat()
         placeholders["publishedtime"] = iso_time
         placeholders["modifiedtime"] = iso_time
-        placeholders["publisheddisplay"] = created_at_utc.strftime("%d %b %Y, %H:%M UTC")
+        placeholders["publisheddisplay"] = created_at_ist.strftime("%d %b %Y, %H:%M IST")
         # Branding
         logo_base = self._site_logo_base
         placeholders["sitelogo32x32"] = f"{logo_base}/32x32/media/brandasset/suvichaariconblack.png"

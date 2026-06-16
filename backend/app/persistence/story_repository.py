@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import DateTime, Integer, JSON, String, Text, inspect, text
+from sqlalchemy import DateTime, Integer, JSON, String, Text, and_, func, inspect, or_, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from app.domain.dto import DocInsights, ImageAsset, Mode, SlideDeck, StoryRecord, VoiceAsset
@@ -143,6 +144,51 @@ class SqlAlchemyStoryRepository(StoryRepository):
             "created_at": record.created_at,
         }
 
+    def list_summary(
+        self,
+        *,
+        mode: Optional[str] = None,
+        category: Optional[str] = None,
+        q: Optional[str] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List["StoryListRow"], int]:
+        """Return a paginated summary list and the total matching count."""
+
+        with self._session_factory() as session:  # type: Session
+            base_q = session.query(StoryORM)
+            conditions = []
+            if mode:
+                conditions.append(StoryORM.mode == mode)
+            if category:
+                conditions.append(StoryORM.category == category)
+            if date_from:
+                conditions.append(StoryORM.created_at >= date_from)
+            if date_to:
+                conditions.append(StoryORM.created_at <= date_to)
+            if q:
+                pattern = f"%{q.lower()}%"
+                conditions.append(
+                    or_(
+                        func.lower(StoryORM.category).like(pattern),
+                        func.lower(StoryORM.template_key).like(pattern),
+                        func.lower(func.cast(StoryORM.doc_insights, Text)).like(pattern),
+                    )
+                )
+            if conditions:
+                base_q = base_q.filter(and_(*conditions))
+
+            total = base_q.count()
+            rows = (
+                base_q.order_by(StoryORM.created_at.desc())
+                .limit(limit)
+                .offset(offset)
+                .all()
+            )
+            return [_to_list_row(row) for row in rows], total
+
     def _deserialize(self, orm: StoryORM) -> StoryRecord:
         return StoryRecord(
             id=UUID(orm.id),
@@ -164,4 +210,62 @@ class SqlAlchemyStoryRepository(StoryRepository):
         )
 
 
-__all__ = ["SqlAlchemyStoryRepository", "StoryORM", "Base", "ensure_story_schema"]
+@dataclass(frozen=True)
+class StoryListRow:
+    """Summary projection of a story used by GET /stories list endpoint."""
+
+    id: UUID
+    title: Optional[str]
+    mode: str
+    category: Optional[str]
+    input_language: Optional[str]
+    slide_count: int
+    template_key: str
+    canurl: Optional[str]
+    created_at: datetime
+
+
+def _extract_title(orm: StoryORM) -> Optional[str]:
+    """Pull the best available human title for the story row."""
+    doc = orm.doc_insights or {}
+    if isinstance(doc, dict):
+        title = doc.get("title")
+        if title:
+            return str(title)
+    deck = orm.slide_deck or {}
+    if isinstance(deck, dict):
+        slides = deck.get("slides") or []
+        for slide in slides:
+            if not isinstance(slide, dict):
+                continue
+            placeholder = slide.get("placeholder_id") or ""
+            text_value = slide.get("text") or ""
+            if placeholder == "cover" and text_value:
+                return str(text_value)
+        for slide in slides:
+            if isinstance(slide, dict) and slide.get("text"):
+                return str(slide["text"])
+    return None
+
+
+def _to_list_row(orm: StoryORM) -> StoryListRow:
+    return StoryListRow(
+        id=UUID(orm.id),
+        title=_extract_title(orm),
+        mode=orm.mode,
+        category=orm.category,
+        input_language=orm.input_language,
+        slide_count=orm.slide_count,
+        template_key=orm.template_key,
+        canurl=orm.canurl or orm.canurl1,
+        created_at=orm.created_at,
+    )
+
+
+__all__ = [
+    "SqlAlchemyStoryRepository",
+    "StoryORM",
+    "StoryListRow",
+    "Base",
+    "ensure_story_schema",
+]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Literal, Optional
 from uuid import UUID
 
@@ -20,8 +20,8 @@ class StoryJob:
     status: JobStatus = "pending"
     error: Optional[str] = None
     record: Optional[StoryRecord] = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(IST))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(IST))
 
 
 class StoryJobRegistry:
@@ -66,10 +66,10 @@ class StoryJobRegistry:
                 return
             for key, value in fields.items():
                 setattr(job, key, value)
-            job.updated_at = datetime.now(timezone.utc)
+            job.updated_at = datetime.now(IST)
 
     def _sweep_locked(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(IST)
         cutoff = self._retention_seconds
         stale = [
             key
@@ -86,3 +86,4 @@ _REGISTRY = StoryJobRegistry()
 
 def get_job_registry() -> StoryJobRegistry:
     return _REGISTRY
+IST = timezone(timedelta(hours=5, minutes=30))

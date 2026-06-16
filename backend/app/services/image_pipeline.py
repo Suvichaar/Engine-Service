@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import mimetypes
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Iterable, List, Mapping, Optional, Protocol, Sequence
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -19,12 +21,24 @@ from app.domain.interfaces import ImageAssetPipeline
 from app.prompt_templates import render_image_prompt
 from app.utils import is_placeholder_value
 from app.services.image_prompts import (
+    apply_image_style,
     extract_positive_keywords,
     generate_content_related_safe_prompt,
     generate_news_slide_prompt,
     generate_safe_news_prompt,
     sanitize_prompt,
     sanitize_revised_prompt,
+)
+
+AI_IMAGE_WIDTH = 720
+AI_IMAGE_HEIGHT = 1280
+OPENAI_PORTRAIT_SIZE = "1024x1792"
+MCP_MAI_WIDTH = 768
+MCP_MAI_HEIGHT = 1280
+MCP_GPT_IMAGE_SIZE = "1024x1536"
+NO_TEXT_IMAGE_CLAUSE = (
+    "text-free image, do not render any readable words, letters, numbers, captions, "
+    "headlines, labels, logos, watermarks, UI text, or typography"
 )
 
 
@@ -212,6 +226,22 @@ class AIImageProvider:
         self._min_cooldown_seconds = cooldown_seconds  # Configurable cooldown
         self._language_model = language_model  # For automatic alt_text generation
 
+    def _normalize_image_model(self, image_model: Optional[str]) -> str:
+        normalized = (image_model or "flux_2").strip().lower().replace("-", "_")
+        aliases = {
+            "flux": "flux_2",
+            "flux2": "flux_2",
+            "flux_2_0": "flux_2",
+            "mai": "mai_2",
+            "mai_image_2": "mai_2",
+            "mae": "mai_2",
+            "gpt": "gpt_image_15",
+            "gpt_1_5": "gpt_image_15",
+            "gpt_image_1_5": "gpt_image_15",
+        }
+        normalized = aliases.get(normalized, normalized)
+        return normalized if normalized in {"flux_2", "mai_2", "gpt_image_15"} else "flux_2"
+
     def _uses_mai_provider_api(self) -> bool:
         return "/mai/v1/images/generations" in self._endpoint
 
@@ -241,16 +271,16 @@ class AIImageProvider:
         if self._uses_mai_provider_api():
             return {
                 "prompt": prompt,
-                "width": 1024,
-                "height": 1024,
+                "width": max(MCP_MAI_WIDTH, AI_IMAGE_WIDTH),
+                "height": AI_IMAGE_HEIGHT,
                 "n": 1,
                 "model": "MAI-Image-2e",
             }
         if self._uses_foundry_provider_api():
             body: dict[str, object] = {
                 "prompt": prompt,
-                "width": 1024,
-                "height": 1024,
+                "width": AI_IMAGE_WIDTH,
+                "height": AI_IMAGE_HEIGHT,
                 "n": 1,
                 "model": "FLUX.2-pro",
             }
@@ -258,7 +288,178 @@ class AIImageProvider:
                 body["input_image"] = base64.b64encode(reference_image_bytes).decode("utf-8")
             return body
 
-        return {"prompt": prompt, "size": "1024x1024"}
+        return {"prompt": prompt, "size": OPENAI_PORTRAIT_SIZE}
+
+    def _enforce_text_free_prompt(
+        self,
+        prompt: str,
+        image_style: Optional[str] = None,
+        image_model: Optional[str] = None,
+    ) -> str:
+        prompt = (prompt or "professional portrait illustration").strip()
+        if "text-free image" not in prompt.lower():
+            prompt = f"{prompt}, {NO_TEXT_IMAGE_CLAUSE}"
+        if "style:" not in prompt.lower():
+            prompt = apply_image_style(prompt, image_style)
+        model = self._normalize_image_model(image_model)
+        if model == "mai_2":
+            prompt = f"{prompt}, realistic news/editorial scene, documentary visual quality"
+        elif model == "gpt_image_15":
+            prompt = f"{prompt}, clean portrait image generation prompt, no typography or labels"
+        if "safe margins" not in prompt.lower():
+            prompt = f"{prompt}, main subject centered with safe margins for 9:16 portrait crop"
+        if "--ar 9:16" not in prompt:
+            prompt = f"{prompt}, --ar 9:16"
+        return prompt
+
+    def _get_mcp_image_settings(self) -> tuple[str, str]:
+        from app.core import get_settings
+
+        settings = get_settings()
+        mcp = getattr(settings, "mcp_image", None)
+        endpoint = (getattr(mcp, "endpoint", "") or "").strip()
+        api_key = (getattr(mcp, "api_key", "") or "").strip()
+        if not endpoint or not api_key:
+            raise RuntimeError("MCP image endpoint/key is not configured.")
+        return endpoint, api_key
+
+    def _parse_sse_json(self, text: str) -> dict[str, object]:
+        data_lines = [line[5:].strip() for line in text.splitlines() if line.startswith("data:")]
+        if not data_lines:
+            return json.loads(text)
+        return json.loads(data_lines[-1])
+
+    def _extract_image_payload(self, value: object) -> bytes:
+        if isinstance(value, dict):
+            for key in ("b64_json", "image_base64", "base64", "data"):
+                candidate = value.get(key)
+                if isinstance(candidate, str) and len(candidate) > 100:
+                    if candidate.startswith("data:"):
+                        candidate = candidate.partition(",")[2]
+                    return base64.b64decode(candidate)
+            for key in ("url", "image_url"):
+                candidate = value.get(key)
+                if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
+                    with httpx.Client(timeout=60.0) as client:
+                        response = client.get(candidate)
+                        response.raise_for_status()
+                        return response.content
+            for nested in value.values():
+                try:
+                    return self._extract_image_payload(nested)
+                except ValueError:
+                    continue
+        if isinstance(value, list):
+            for item in value:
+                try:
+                    return self._extract_image_payload(item)
+                except ValueError:
+                    continue
+        if isinstance(value, str):
+            try:
+                return self._extract_image_payload(json.loads(value))
+            except Exception:
+                pass
+        raise ValueError("No image payload returned from MCP image tool.")
+
+    def _call_mcp_image_tool(self, tool_name: str, arguments: dict[str, object]) -> bytes:
+        endpoint, api_key = self._get_mcp_image_settings()
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        }
+        init_body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "engine-service", "version": "1.0"},
+            },
+        }
+        with httpx.Client(timeout=180.0) as client:
+            init_response = client.post(endpoint, headers=headers, json=init_body)
+            init_response.raise_for_status()
+            session_id = init_response.headers.get("mcp-session-id")
+            if session_id:
+                headers["mcp-session-id"] = session_id
+                client.post(
+                    endpoint,
+                    headers=headers,
+                    json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+                )
+            call_response = client.post(
+                endpoint,
+                headers=headers,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {"name": tool_name, "arguments": arguments},
+                },
+            )
+            call_response.raise_for_status()
+        envelope = self._parse_sse_json(call_response.text)
+        if envelope.get("error"):
+            raise RuntimeError(f"MCP image tool failed: {envelope['error']}")
+        return self._extract_image_payload(envelope.get("result", envelope))
+
+    def _generate_mcp_image(
+        self,
+        placeholder_id: str,
+        prompt: str,
+        image_model: str,
+    ) -> ImageContent:
+        if image_model == "mai_2":
+            image_bytes = self._call_mcp_image_tool(
+                "generate_image_mai_2",
+                {"prompt": prompt, "width": MCP_MAI_WIDTH, "height": MCP_MAI_HEIGHT, "n": 1},
+            )
+        elif image_model == "gpt_image_15":
+            image_bytes = self._call_mcp_image_tool(
+                "generate_image_gpt_image_15",
+                {
+                    "prompt": prompt,
+                    "size": MCP_GPT_IMAGE_SIZE,
+                    "quality": "medium",
+                    "output_format": "png",
+                    "n": 1,
+                },
+            )
+        else:
+            raise ValueError(f"Unsupported MCP image model: {image_model}")
+
+        return ImageContent(
+            placeholder_id=placeholder_id,
+            content=self._normalize_image_bytes(image_bytes),
+            filename=f"{placeholder_id}.png",
+            description=f"AI generated image ({image_model})",
+        )
+
+    def _normalize_image_bytes(self, image_bytes: bytes) -> bytes:
+        try:
+            from PIL import Image, ImageOps
+
+            with Image.open(BytesIO(image_bytes)) as img:
+                normalized = ImageOps.fit(
+                    img.convert("RGB"),
+                    (AI_IMAGE_WIDTH, AI_IMAGE_HEIGHT),
+                    method=Image.LANCZOS,
+                    centering=(0.5, 0.5),
+                )
+                output = BytesIO()
+                normalized.save(output, format="PNG")
+                return output.getvalue()
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Failed to normalize AI image to %sx%s: %s",
+                AI_IMAGE_WIDTH,
+                AI_IMAGE_HEIGHT,
+                exc,
+            )
+            return image_bytes
 
     def _get_reference_image_refs(self, payload: IntakePayload) -> list[str]:
         metadata = payload.metadata or {}
@@ -475,6 +676,10 @@ class AIImageProvider:
         logger = logging.getLogger(__name__)
         max_idx = min(payload.slide_count or len(deck.slides), len(deck.slides))
         article_content = payload.metadata.get("article_content") if payload.metadata else None
+        image_style = payload.metadata.get("image_style") if payload.metadata else None
+        image_model = self._normalize_image_model(
+            payload.metadata.get("image_model") if payload.metadata else None
+        )
 
         slide_indices = [
             idx for idx in range(max_idx) if not deck.slides[idx].image_url
@@ -494,6 +699,7 @@ class AIImageProvider:
                 is_cover=(idx == 0),
                 is_cta=(idx == max_idx - 1),
                 article_content=article_content,
+                image_style=image_style,
             )
             try:
                 ref = self._pick_reference_image_ref(payload, idx)
@@ -502,6 +708,8 @@ class AIImageProvider:
                     slide.placeholder_id,
                     prompt,
                     reference_image_bytes=reference_image,
+                    image_style=image_style,
+                    image_model=image_model,
                 )
                 logger.info("✅ Generated image for slide %d (index %d)", idx + 1, idx)
                 return idx, image_content, False
@@ -520,6 +728,7 @@ class AIImageProvider:
                             is_cover=(idx == 0),
                             is_cta=(idx == max_idx - 1),
                             article_content=article_content[:400] if article_content else None,
+                            image_style=image_style,
                         )
                         if article_content
                         else self._generate_safe_news_prompt(slide_text, slide_index=idx)
@@ -530,6 +739,8 @@ class AIImageProvider:
                         slide.placeholder_id,
                         fallback_prompt,
                         reference_image_bytes=reference_image,
+                        image_style=image_style,
+                        image_model=image_model,
                     )
                     logger.info("✅ Generated fallback image for slide %d", idx + 1)
                     return idx, fallback_content, False
@@ -584,6 +795,8 @@ class AIImageProvider:
         prompt: str,
         retry_count: int = 3,
         reference_image_bytes: Optional[bytes] = None,
+        image_style: Optional[str] = None,
+        image_model: Optional[str] = None,
     ) -> ImageContent:
         import base64
         import logging
@@ -593,6 +806,11 @@ class AIImageProvider:
         # Wait for cooldown before making request
         self._wait_for_cooldown()
         
+        image_model = self._normalize_image_model(image_model)
+        prompt = self._enforce_text_free_prompt(prompt, image_style, image_model)
+        if image_model in {"mai_2", "gpt_image_15"}:
+            return self._generate_mcp_image(placeholder_id, prompt, image_model)
+
         # Limit prompt length to avoid API issues (DALL-E has prompt length limits)
         max_prompt_length = 1000
         if len(prompt) > max_prompt_length:
@@ -730,7 +948,9 @@ class AIImageProvider:
             with httpx.Client(timeout=30.0) as client:
                 img_response = client.get(image_url)
                 img_response.raise_for_status()
-                image_bytes = img_response.content
+            image_bytes = img_response.content
+
+        image_bytes = self._normalize_image_bytes(image_bytes)
         
         filename = f"{placeholder_id}.png"
         return ImageContent(

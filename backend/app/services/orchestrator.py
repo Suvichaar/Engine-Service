@@ -7,11 +7,13 @@ import random
 import hashlib
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional, Sequence
 from uuid import UUID, uuid4
 
 import httpx
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 from app.domain.dto import (
     AnalysisReport,
@@ -398,7 +400,7 @@ class StoryOrchestrator:
             voice_assets = []  # Continue without voice
 
         story_id = preset_story_id or self.id_factory()
-        created_at = datetime.utcnow()
+        created_at = datetime.now(IST)
 
         story_title = None
         if narrative.slide_deck.slides:
@@ -584,6 +586,8 @@ class StoryOrchestrator:
             slide_count=request.slide_count,
             category=request.category,
             image_source=request.image_source,
+            image_style=request.image_style,
+            image_model=request.image_model,
             voice_engine=request.voice_engine,
             voice_id=request.voice_id,
         )
