@@ -55,6 +55,48 @@ SLIDE_VARIATIONS = [
     "with elegant monochrome style"
 ]
 
+NO_TEXT_IMAGE_CLAUSE = (
+    "text-free image, do not render any readable words, letters, numbers, captions, "
+    "headlines, labels, logos, watermarks, UI text, typography, signage, posters, "
+    "screens with text, app icons, social media icons, emoji, stickers, badges, or symbols containing text"
+)
+
+IMAGE_STYLE_CLAUSES = {
+    "vector": "clean vector illustration, flat shapes, crisp edges, controlled palette, modern editorial composition",
+    "realistic": "realistic editorial photography style, natural lighting, believable textures, documentary composition",
+    "cinematic": "cinematic realistic scene, dramatic but natural lighting, shallow depth of field, premium editorial look",
+    "editorial": "premium editorial illustration, sophisticated composition, restrained colors, magazine-quality visual direction",
+    "watercolor": "soft watercolor editorial illustration, organic texture, gentle washes, refined hand-painted look",
+    "minimal": "minimal clean illustration, simple forms, generous negative space, restrained palette",
+}
+
+
+def normalize_image_style(image_style: Optional[str]) -> str:
+    """Return a supported image style key, defaulting to editorial."""
+    if not image_style:
+        return "editorial"
+    normalized = image_style.strip().lower().replace("_", "-")
+    aliases = {
+        "real": "realistic",
+        "photo": "realistic",
+        "photorealistic": "realistic",
+        "photographic": "realistic",
+        "flat": "vector",
+        "flat-vector": "vector",
+        "illustration": "vector",
+        "minimalist": "minimal",
+    }
+    return aliases.get(normalized, normalized if normalized in IMAGE_STYLE_CLAUSES else "editorial")
+
+
+def image_style_clause(image_style: Optional[str]) -> str:
+    return IMAGE_STYLE_CLAUSES[normalize_image_style(image_style)]
+
+
+def apply_image_style(prompt: str, image_style: Optional[str] = None) -> str:
+    prompt = (prompt or "professional editorial visual").strip()
+    return f"{prompt}, style: {image_style_clause(image_style)}, {NO_TEXT_IMAGE_CLAUSE}"
+
 # Positive keywords for extraction
 POSITIVE_KEYWORDS = [
     "technology", "innovation", "development", "progress", "growth", "success", 
@@ -78,6 +120,35 @@ SAFE_TERMS = [
     "education", "learning", "knowledge", "science", "technology",
     "business", "economy", "sports", "culture", "art", "history",
     "health", "environment", "innovation", "development", "progress"
+]
+
+SENSITIVE_NEWS_PATTERNS = {
+    "public_figure": [
+        r"\b(president|prime minister|minister|leader|official|government|administration|commander|general)\b",
+    ],
+    "geopolitical_action": [
+        r"\b(seiz(?:e|ing|ed)|takeover|occup(?:y|ying|ied|ation)|annex(?:ation)?|blockade|sanction(?:s|ed)?)\b",
+        r"\b(control|capture|target|intercept|deploy(?:ment|ed)?|patrol(?:ling)?)\b",
+    ],
+    "military_security": [
+        r"\b(military|troops|marines|naval|navy|army|air force|forces|missile|drone|weapon(?:s)?)\b",
+        r"\b(defen[cs]e|security|strike|attack|combat|war|conflict|tension(?:s)?)\b",
+    ],
+    "energy_infrastructure": [
+        r"\b(oil|gas|energy|pipeline|terminal|refinery|export hub|port|tanker(?:s)?)\b",
+    ],
+    "strategic_location": [
+        r"\b(island|strait|gulf|border|waterway|shipping lane|trade route|corridor|chokepoint)\b",
+    ],
+}
+
+SAFE_EDITORIAL_VISUALS = [
+    "global energy market scene with abstract chart-like shapes and calm blue map lines",
+    "professional newsroom desk with abstract world map shapes and balanced editorial lighting",
+    "international diplomacy table with flags represented as abstract color blocks",
+    "maritime trade route map with clean shipping silhouettes and neutral data-like overlays",
+    "economic news scene with energy-sector objects and abstract data shapes",
+    "geopolitical analysis scene with neutral map shapes and soft studio lighting",
 ]
 
 # Negative patterns to remove from prompts
@@ -138,7 +209,7 @@ def sanitize_prompt(text: str, fallback_fn=None) -> str:
     
     # If we have positive keywords, use them
     if positive_keywords:
-        safe_prompt = f"{', '.join(positive_keywords)}, professional news illustration, positive, informative, clean, modern"
+        safe_prompt = f"{', '.join(positive_keywords)}, professional news illustration, positive, informative, clean, modern, {NO_TEXT_IMAGE_CLAUSE}"
         return safe_prompt
     
     # If too much was removed or no positive keywords, use generic safe prompt
@@ -148,7 +219,7 @@ def sanitize_prompt(text: str, fallback_fn=None) -> str:
         return generate_safe_news_prompt()
     
     # Use sanitized text with safe modifiers
-    return f"{sanitized[:100]}, professional news illustration, positive, informative, clean, modern"
+    return f"{sanitized[:100]}, professional news illustration, positive, informative, clean, modern, {NO_TEXT_IMAGE_CLAUSE}"
 
 
 def generate_safe_news_prompt(topic: Optional[str] = None, slide_index: Optional[int] = None) -> str:
@@ -176,7 +247,7 @@ def generate_safe_news_prompt(topic: Optional[str] = None, slide_index: Optional
         variation = random.choice(VARIATION_MODIFIERS)
     
     # Don't add topic if it might cause issues - keep it very simple
-    return f"{base_prompt}, {variation}, professional, clean, modern, positive, informative, high quality"
+    return f"{base_prompt}, {variation}, professional, clean, modern, positive, informative, high quality, {NO_TEXT_IMAGE_CLAUSE}"
 
 
 def generate_content_related_safe_prompt(
@@ -227,8 +298,54 @@ def generate_content_related_safe_prompt(
             base = "professional news themed editorial illustration, informative, uplifting, clean design, modern aesthetic"
     
     # Add safe modifiers (keep positive phrasing; avoid 'no ...' patterns)
-    modifiers = "family-friendly, calm, optimistic mood, professional quality, clean composition"
+    modifiers = f"family-friendly, calm, optimistic mood, professional quality, clean composition, {NO_TEXT_IMAGE_CLAUSE}"
     return f"{base}, {modifiers}"
+
+
+def is_sensitive_news_topic(text: str) -> bool:
+    """Return True when text is likely to trigger image safety filters."""
+    if not text:
+        return False
+    lowered = text.lower()
+    matched_categories = {
+        category
+        for category, patterns in SENSITIVE_NEWS_PATTERNS.items()
+        if any(re.search(pattern, lowered) for pattern in patterns)
+    }
+
+    if "military_security" in matched_categories and (
+        "geopolitical_action" in matched_categories
+        or "strategic_location" in matched_categories
+        or "energy_infrastructure" in matched_categories
+    ):
+        return True
+
+    if "geopolitical_action" in matched_categories and (
+        "public_figure" in matched_categories
+        or "strategic_location" in matched_categories
+        or "energy_infrastructure" in matched_categories
+    ):
+        return True
+
+    if {"public_figure", "military_security", "strategic_location"}.issubset(matched_categories):
+        return True
+
+    if {"public_figure", "energy_infrastructure", "strategic_location"}.issubset(matched_categories):
+        return True
+
+    return False
+
+
+def generate_safe_editorial_visual_prompt(slide_index: int, is_cover: bool = False, is_cta: bool = False) -> str:
+    """Generate a neutral, topic-adjacent news visual without risky named entities."""
+    base = SAFE_EDITORIAL_VISUALS[slide_index % len(SAFE_EDITORIAL_VISUALS)]
+    variation = SLIDE_VARIATIONS[slide_index % len(SLIDE_VARIATIONS)]
+    role = "cover" if is_cover else "CTA" if is_cta else f"slide {slide_index + 1}"
+    return (
+        f"{base}, professional news {role} illustration, {variation}, "
+        "calm informative mood, family-friendly, people-free abstract editorial scene, "
+        f"peaceful studio lighting, clean modern composition, high quality, {NO_TEXT_IMAGE_CLAUSE}"
+    )
 
 
 def generate_news_slide_prompt(
@@ -236,7 +353,8 @@ def generate_news_slide_prompt(
     slide_index: int, 
     is_cover: bool = False, 
     is_cta: bool = False,
-    article_content: Optional[str] = None
+    article_content: Optional[str] = None,
+    image_style: Optional[str] = None,
 ) -> str:
     """Generate prompt for a news mode slide.
     
@@ -257,6 +375,13 @@ def generate_news_slide_prompt(
         # This ensures we capture key concepts from the article without excessive processing time
         article_snippet = article_content[:800] if len(article_content) > 800 else article_content
         combined_content = f"{slide_text}. {article_snippet}"
+
+        if is_sensitive_news_topic(combined_content):
+            return apply_image_style(generate_safe_editorial_visual_prompt(
+                slide_index,
+                is_cover=is_cover,
+                is_cta=is_cta,
+            ), image_style)
         
         # Use editorial style prompt which extracts key concepts from article
         # This ensures images are relevant to the actual article content
@@ -270,11 +395,11 @@ def generate_news_slide_prompt(
             # Add slide-specific modifiers
             variation = SLIDE_VARIATIONS[slide_index % len(SLIDE_VARIATIONS)]
             if is_cover:
-                return f"{prompt}, professional news cover illustration, {variation}"
+                return apply_image_style(f"{prompt}, professional news cover visual, {variation}", image_style)
             elif is_cta:
-                return f"{prompt}, professional news CTA illustration, {variation}, call-to-action"
+                return apply_image_style(f"{prompt}, professional news closing visual, {variation}", image_style)
             else:
-                return f"{prompt}, professional news illustration for slide {slide_index + 1}, {variation}"
+                return apply_image_style(f"{prompt}, professional news visual for slide {slide_index + 1}, {variation}", image_style)
         except Exception:
             # Fallback to simple prompt if editorial style fails
             pass
@@ -286,11 +411,11 @@ def generate_news_slide_prompt(
     variation = SLIDE_VARIATIONS[slide_index % len(SLIDE_VARIATIONS)]
     
     if is_cover:
-        return f"{safe_text}, professional news cover illustration, {variation}, positive, informative, clean, modern, unique design"
+        return apply_image_style(f"{safe_text}, professional news cover visual, {variation}, positive, informative, clean, modern, unique design", image_style)
     elif is_cta:
-        return f"{safe_text}, professional news CTA illustration, {variation}, positive, informative, clean, modern, call-to-action, unique design"
+        return apply_image_style(f"{safe_text}, professional news closing visual, {variation}, positive, informative, clean, modern, unique design", image_style)
     else:
-        return f"{safe_text}, professional news illustration for slide {slide_index + 1}, {variation}, positive, informative, clean, modern, unique design"
+        return apply_image_style(f"{safe_text}, professional news visual for slide {slide_index + 1}, {variation}, positive, informative, clean, modern, unique design", image_style)
 
 
 def sanitize_revised_prompt(revised_prompt: str, max_length: int = 200) -> str:
@@ -333,7 +458,7 @@ def sanitize_revised_prompt(revised_prompt: str, max_length: int = 200) -> str:
     # Step 6: If still too violent, use generic safe prompt
     violence_keywords = ["violence", "attack", "strike", "defeat", "battle", "combat", "weapon", "fighting", "war"]
     if any(word in sanitized.lower() for word in violence_keywords):
-        return "peaceful mythological illustration, divine hero in heroic stance, sacred ground, bright colors, clean lines, family-friendly"
+        return f"peaceful mythological illustration, divine hero in heroic stance, sacred ground, bright colors, clean lines, family-friendly, {NO_TEXT_IMAGE_CLAUSE}"
     
     # Step 7: Truncate if too long
     if len(sanitized) > max_length:
@@ -522,18 +647,14 @@ def generate_editorial_style_prompt(
         ]
         color_palette = random.choice(color_palettes)
     
-    # Step 6: Build the final prompt
-    topic_title_upper = topic_title.upper()[:40]  # Limit title length
-    
+    # Step 6: Build the final prompt. Keep all typography out of the image.
     prompt = (
         f"A serious, intellectual editorial illustration in distinctive ink line art and "
         f"{color_palette} style. The concept visualizes {topic_title}. "
         f"{visual_description}, with detailed elements representing the core ideas and concepts. "
         f"The mood is {mood_adjectives}. Isolated on a pure, clean white background. "
-        f"The specific concept title '{topic_title_upper}' is rendered in small, elegant, "
-        f"understated ink typography in a single horizontal line integrated into the upper left corner. "
         f"Professional quality, family-friendly, no negative imagery, positive representation only. "
-        f"--ar 9:16"
+        f"{NO_TEXT_IMAGE_CLAUSE}. --ar 9:16"
     )
     
     return prompt

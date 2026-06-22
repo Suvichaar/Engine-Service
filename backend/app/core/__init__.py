@@ -83,6 +83,11 @@ class AIImageSettings(BaseModel):
     api_key: str
 
 
+class MCPImageSettings(BaseModel):
+    endpoint: str = ""
+    api_key: str = ""
+
+
 class PexelsSettings(BaseModel):
     api_key: str
 
@@ -149,6 +154,7 @@ class AppSettings(BaseModel):
     azure_di: AzureDocumentIntelligenceSettings
     aws: AWSSettings
     ai_image: AIImageSettings | None = None
+    mcp_image: MCPImageSettings = MCPImageSettings()
     pexels: PexelsSettings | None = None
     serper: SerperSettings | None = None
     image_processing: ImageProcessingSettings = ImageProcessingSettings()
@@ -224,6 +230,10 @@ def _env_override() -> Dict[str, Any]:
         "ai_image": {
             "endpoint": get_env_with_fallback("AI_IMAGE_ENDPOINT"),
             "api_key": get_env_with_fallback("AI_IMAGE_API_KEY"),
+        },
+        "mcp_image": {
+            "endpoint": get_env_with_fallback("MCP_IMAGE_ENDPOINT"),
+            "api_key": get_env_with_fallback("MCP_IMAGE_API_KEY"),
         },
         "pexels": {"api_key": get_env_with_fallback("PEXELS_API_KEY")},
         "image_processing": {"resize_variants": get_env_with_fallback("RESIZE_VARIANTS")},
@@ -326,6 +336,10 @@ SECTION_MAPPING: Dict[str, Dict[str, str]] = {
     "ai_image": {
         "AI_IMAGE_ENDPOINT": "endpoint",
         "AI_IMAGE_API_KEY": "api_key",
+    },
+    "mcp_image": {
+        "MCP_IMAGE_ENDPOINT": "endpoint",
+        "MCP_IMAGE_API_KEY": "api_key",
     },
     "pexels": {
         "PEXELS_API_KEY": "api_key",
@@ -446,6 +460,15 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
             ai_image_dict["endpoint"] = ""
         if "api_key" not in ai_image_dict:
             ai_image_dict["api_key"] = ""
+
+    if "mcp_image" not in merged:
+        merged["mcp_image"] = {"endpoint": "", "api_key": ""}
+    elif isinstance(merged.get("mcp_image"), dict):
+        mcp_image_dict = merged["mcp_image"]
+        if "endpoint" not in mcp_image_dict:
+            mcp_image_dict["endpoint"] = ""
+        if "api_key" not in mcp_image_dict:
+            mcp_image_dict["api_key"] = ""
     
     # Note: ai_image endpoint and api_key should be set via environment variables
     # In Azure Container Apps, set: AI_IMAGE_ENDPOINT and AI_IMAGE_API_KEY

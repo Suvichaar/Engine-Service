@@ -7,11 +7,13 @@ import random
 import hashlib
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional, Sequence
 from uuid import UUID, uuid4
 
 import httpx
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 from app.domain.dto import (
     AnalysisReport,
@@ -65,7 +67,12 @@ class StoryOrchestrator:
     story_base_url: Optional[str] = None
     save_to_database: bool = True  # Default to True - save stories to database
 
-    def create_story(self, request: StoryCreateRequest) -> StoryRecord:
+    def create_story(
+        self,
+        request: StoryCreateRequest,
+        *,
+        preset_story_id: Optional[UUID] = None,
+    ) -> StoryRecord:
         import logging
         logger = logging.getLogger(__name__)
         
@@ -392,14 +399,27 @@ class StoryOrchestrator:
             logger.error("❌ Voice synthesis failed: %s", e, exc_info=True)
             voice_assets = []  # Continue without voice
 
-        story_id = self.id_factory()
-        created_at = datetime.utcnow()
-        
+        story_id = preset_story_id or self.id_factory()
+        created_at = datetime.now(IST)
+
         story_title = None
         if narrative.slide_deck.slides:
             story_title = narrative.slide_deck.slides[0].text or None
-        
+
         canurl, canurl1 = self._build_canurls(story_id, story_title=story_title, mode=payload.mode)
+
+        og_image_url = None
+        if image_assets:
+            cover = image_assets[0]
+            cover_key = getattr(cover, "original_object_key", None)
+            if cover_key:
+                try:
+                    og_image_url = self.image_pipeline.generate_og_image(
+                        source_s3_key=cover_key,
+                        story_id=str(story_id),
+                    )
+                except Exception as e:
+                    logger.warning("Failed to generate OG image for story %s: %s", story_id, e)
 
         record = StoryRecord(
             id=story_id,
@@ -417,6 +437,7 @@ class StoryOrchestrator:
             prompt_file=rendered_prompt.metadata.get("prompt_file"),
             canurl=canurl,
             canurl1=canurl1,
+            og_image_url=og_image_url,
             created_at=created_at,
         )
 
@@ -565,6 +586,8 @@ class StoryOrchestrator:
             slide_count=request.slide_count,
             category=request.category,
             image_source=request.image_source,
+            image_style=request.image_style,
+            image_model=request.image_model,
             voice_engine=request.voice_engine,
             voice_id=request.voice_id,
         )

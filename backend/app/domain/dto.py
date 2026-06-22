@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl, conint, constr
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 SlideCount = conint(strict=True, ge=4, le=10)
@@ -209,7 +211,8 @@ class StoryRecord(BaseModel):
     prompt_file: Optional[str] = Field(default=None, description="Prompt definition file used to generate the story.")
     canurl: Optional[HttpUrl] = Field(default=None, description="Primary shareable URL.")
     canurl1: Optional[HttpUrl] = Field(default=None, description="Secondary shareable URL.")
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp when the story was stored.")
+    og_image_url: Optional[HttpUrl] = Field(default=None, description="Pre-baked 1200x630 JPG used for og:image / twitter:image (WhatsApp-friendly share preview).")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(IST), description="Timestamp when the story was stored.")
 
 
 class NarrativeResponse(BaseModel):

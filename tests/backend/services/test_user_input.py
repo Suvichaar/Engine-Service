@@ -23,6 +23,7 @@ def test_build_payload_normalizes_inputs():
         slide_count="8",
         category="News",
         image_source="pexels",
+        image_style="realistic",
         voice_engine="elevenlabs_pro",
     )
 
@@ -33,6 +34,7 @@ def test_build_payload_normalizes_inputs():
     assert payload.mode == Mode.NEWS
     assert payload.template_key == "modern_dark"
     assert payload.voice_engine == "elevenlabs_pro"
+    assert payload.metadata["image_style"] == "realistic"
 
 
 def test_build_payload_filters_invalid_urls():

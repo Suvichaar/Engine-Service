@@ -6,7 +6,7 @@ import base64
 import json
 import logging
 import re
-from datetime import timezone
+from datetime import timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -19,6 +19,8 @@ from app.domain.dto import ImageAsset, Mode, SlideBlock, SlideDeck, StoryRecord,
 from app.services.template_registry import get_template_definition
 from app.services.template_slide_generators import get_slide_generator
 from app.services.model_clients import LanguageModel
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 class TemplateLoader:
@@ -109,6 +111,7 @@ class PlaceholderMapper:
         analytics_id: str = "",
         adsense_client_id: str = "",
         adsense_slot_id: str = "",
+        default_og_image: str = "",
         language_model: Optional[LanguageModel] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
@@ -125,6 +128,7 @@ class PlaceholderMapper:
         self._analytics_id = analytics_id
         self._adsense_client_id = adsense_client_id
         self._adsense_slot_id = adsense_slot_id
+        self._default_og_image = default_og_image
         self._language_model = language_model
         self._logger = logger or logging.getLogger(__name__)
 
@@ -259,6 +263,14 @@ class PlaceholderMapper:
                     except Exception:
                         placeholders["msthumbnailcoverurl"] = cover_url
 
+        # OG/social-share image (1200x630 JPG) — pre-baked URL preferred; falls back to default OG, then to cover.
+        og_url = str(record.og_image_url) if getattr(record, "og_image_url", None) else ""
+        if not og_url and self._default_og_image:
+            og_url = self._default_og_image
+        if not og_url:
+            og_url = placeholders.get("image0", "")
+        placeholders["og_image_url"] = og_url
+
         # Slide images (s1image1, s2image1, etc.)
         # Special handling for News mode:
         # - If image_source is blank/null/default → use default polarisslide.png for all slides
@@ -349,12 +361,12 @@ class PlaceholderMapper:
         # URLs
         placeholders["canurl"] = str(record.canurl) if record.canurl else ""
         placeholders["canurl1"] = str(record.canurl1) if record.canurl1 else ""
-        # Keep ISO timestamps for metadata/structured data, but also provide a UI-friendly display value.
-        created_at_utc = record.created_at.astimezone(timezone.utc)
-        iso_time = created_at_utc.isoformat().replace("+00:00", "Z")
+        # Keep ISO timestamps for metadata/structured data in IST, and provide a UI-friendly display value.
+        created_at_ist = record.created_at.astimezone(IST) if record.created_at.tzinfo else record.created_at.replace(tzinfo=timezone.utc).astimezone(IST)
+        iso_time = created_at_ist.isoformat()
         placeholders["publishedtime"] = iso_time
         placeholders["modifiedtime"] = iso_time
-        placeholders["publisheddisplay"] = created_at_utc.strftime("%d %b %Y, %H:%M UTC")
+        placeholders["publisheddisplay"] = created_at_ist.strftime("%d %b %Y, %H:%M IST")
         # Branding
         logo_base = self._site_logo_base
         placeholders["sitelogo32x32"] = f"{logo_base}/32x32/media/brandasset/suvichaariconblack.png"
@@ -598,6 +610,7 @@ class HTMLTemplateRenderer:
         analytics_id: str = "",
         adsense_client_id: str = "",
         adsense_slot_id: str = "",
+        default_og_image: str = "",
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._loader = template_loader or TemplateLoader(template_base_path=template_base_path)
@@ -615,6 +628,7 @@ class HTMLTemplateRenderer:
             analytics_id=analytics_id,
             adsense_client_id=adsense_client_id,
             adsense_slot_id=adsense_slot_id,
+            default_og_image=default_og_image,
             language_model=language_model,
         )
         self._logger = logger or logging.getLogger(__name__)

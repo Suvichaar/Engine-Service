@@ -59,6 +59,13 @@ def _write_manifest(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
+def _version_sort_key(value: str) -> tuple[int, int | str]:
+    normalized = str(value).strip().lower()
+    if normalized.startswith("v") and normalized[1:].isdigit():
+        return (1, int(normalized[1:]))
+    return (0, normalized)
+
+
 class TemplateManagementService:
     """Manage versioned HTML templates for a single mode."""
 
@@ -263,7 +270,24 @@ class TemplateManagementService:
         if target is None:
             raise TemplateManagementError(f"Template '{key}' version '{version}' does not exist.")
         if bool(target.get("active")):
-            raise TemplateManagementError("Cannot delete an active template version. Activate another version first.")
+            sibling_versions = [
+                item
+                for item in retained
+                if item.get("mode") == self._mode.value and item.get("key") == key
+            ]
+            if not sibling_versions:
+                raise TemplateManagementError(
+                    "Cannot delete the only active template version. Create or activate another version first."
+                )
+
+            preferred_siblings = [item for item in sibling_versions if bool(item.get("enabled", True))]
+            replacement = max(
+                preferred_siblings or sibling_versions,
+                key=lambda item: _version_sort_key(str(item.get("version", ""))),
+            )
+            for item in sibling_versions:
+                item["active"] = False
+            replacement["active"] = True
 
         file_path = self._root / str(target["file"])
         if file_path.exists():

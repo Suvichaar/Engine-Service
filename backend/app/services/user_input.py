@@ -91,6 +91,8 @@ class DefaultUserInputService(UserInputService):
                 "input_mode": raw_inputs.get("input_mode"),
                 "slide_inputs": self._normalize_slide_inputs(raw_inputs.get("slide_inputs")),
                 "image_references": self._normalize_attachments(raw_inputs.get("image_references")),
+                "image_style": raw_inputs.get("image_style"),
+                "image_model": raw_inputs.get("image_model"),
             },
         }
         try:
