@@ -109,6 +109,12 @@ class ImageAssetPipeline(Protocol):
     ) -> list[ImageAsset]:
         """Return image assets keyed to slide placeholders."""
 
+    def generate_og_image(self, *, source_s3_key: str, story_id: str) -> Optional[str]:
+        """Pre-bake a 1200x630 social-share JPG for the given cover S3 key.
+
+        Returns a public CDN URL or None if generation is unavailable/fails.
+        """
+
 
 class VoiceSynthesisService(Protocol):
     """Produce narrated audio assets."""

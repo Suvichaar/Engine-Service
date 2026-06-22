@@ -99,6 +99,7 @@ class PlaceholderMapper:
         organization: str = "Suvichaar",
         cdn_prefix_media: str = "https://media.suvichaar.org/",
         aws_bucket: str = "suvichaarapp",
+        default_og_image: str = "",
         language_model: Optional[LanguageModel] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
@@ -107,6 +108,7 @@ class PlaceholderMapper:
         self._organization = organization
         self._cdn_prefix_media = cdn_prefix_media.rstrip("/") + "/"
         self._aws_bucket = aws_bucket
+        self._default_og_image = default_og_image
         self._language_model = language_model
         self._logger = logger or logging.getLogger(__name__)
 
@@ -215,6 +217,14 @@ class PlaceholderMapper:
                     placeholders["msthumbnailcoverurl"] = self._generate_resized_url(cover_url, 300, 300)
                 except Exception:
                     placeholders["msthumbnailcoverurl"] = cover_url
+
+        # OG/social-share image (1200x630 JPG) — pre-baked URL preferred; falls back to default OG, then to cover.
+        og_url = str(record.og_image_url) if getattr(record, "og_image_url", None) else ""
+        if not og_url and self._default_og_image:
+            og_url = self._default_og_image
+        if not og_url:
+            og_url = placeholders.get("image0", "")
+        placeholders["og_image_url"] = og_url
 
         # Slide images (s1image1, s2image1, etc.)
         # - If image_source is "custom" → use image_assets mapped to s1image1, s2image1, etc.
@@ -536,12 +546,14 @@ class HTMLTemplateRenderer:
         language_model: Optional[LanguageModel] = None,
         cdn_prefix_media: str = "https://media.suvichaar.org/",
         aws_bucket: str = "suvichaarapp",
+        default_og_image: str = "",
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._loader = template_loader or TemplateLoader(template_base_path=template_base_path)
         self._mapper = placeholder_mapper or PlaceholderMapper(
             cdn_prefix_media=cdn_prefix_media,
             aws_bucket=aws_bucket,
+            default_og_image=default_og_image,
             language_model=language_model,
         )
         self._logger = logger or logging.getLogger(__name__)

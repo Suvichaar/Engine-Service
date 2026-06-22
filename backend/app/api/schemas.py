@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import List, Literal, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
@@ -91,6 +93,23 @@ class StoryResponse(StoryRecord):
             }
         }
     )
+
+
+StoryJobStatus = Literal["pending", "processing", "completed", "failed"]
+
+
+class StoryJobAck(BaseModel):
+    id: UUID
+    status: StoryJobStatus = "pending"
+
+
+class StoryJobStatusResponse(BaseModel):
+    id: UUID
+    status: StoryJobStatus
+    error: Optional[str] = None
+    story: Optional[StoryResponse] = None
+    created_at: datetime
+    updated_at: datetime
 
 
 PromptGroup = Literal["text_prompts", "image_prompts"]

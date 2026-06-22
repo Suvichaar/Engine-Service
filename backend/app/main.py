@@ -6,11 +6,13 @@ import logging
 import sys
 import os
 import re
+import threading
 from collections import deque
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional
+from uuid import UUID, uuid4
 
 # ============================================
 # LOGGING CONFIGURATION - MUST BE FIRST
@@ -105,6 +107,8 @@ from app.api.schemas import (
     TemplateUpdateRequest,
     TemplateVersionResponse,
     StoryCreateRequest,
+    StoryJobAck,
+    StoryJobStatusResponse,
     StoryResponse,
 )
 from app.core import get_settings
@@ -132,6 +136,7 @@ from app.services.language_detection import (
 from app.services.azure_openai_client import AzureOpenAILanguageModel
 from app.services.model_clients import CuriousModelClient, LanguageModel
 from app.services.model_router import DefaultModelRouter
+from app.services.job_registry import StoryJobRegistry, get_job_registry
 from app.services.orchestrator import StoryOrchestrator
 from app.services.prompt_management import PromptManagementError, PromptManagementService
 from app.services.template_management import TemplateManagementError, TemplateManagementService
@@ -150,10 +155,15 @@ from app.utils import is_placeholder_value
 
 
 def _parse_cors_allowed_origins(raw_value: Optional[str]) -> list[str]:
-    if not raw_value:
-        return ["http://localhost:3000", "http://127.0.0.1:3000"]
-    origins = [item.strip() for item in raw_value.split(",") if item.strip()]
-    return origins or ["http://localhost:3000", "http://127.0.0.1:3000"]
+    default_origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://suvichaar-storygenerator.vercel.app",
+        "https://suvichaar.org",
+        "https://www.suvichaar.org",
+    ]
+    origins = [item.strip() for item in raw_value.split(",") if item.strip()] if raw_value else []
+    return list(dict.fromkeys([*default_origins, *origins]))
 
 
 settings = get_settings()
@@ -324,6 +334,7 @@ def get_orchestrator() -> StoryOrchestrator:
         aws_access_key=settings.aws.access_key,
         aws_secret_key=settings.aws.secret_key,
         aws_region=settings.aws.region,
+        og_cdn_base=settings.aws.cdn_base,
     )
     image_pipeline = DefaultImageAssetPipeline(image_providers, image_storage)
 
@@ -391,6 +402,7 @@ def get_orchestrator() -> StoryOrchestrator:
         template_base_path=Path("app/templates"),
         cdn_prefix_media=settings.aws.cdn_prefix_media,
         aws_bucket=settings.aws.bucket,
+        default_og_image=f"{settings.aws.cdn_base.rstrip('/')}/og-images/_default.jpg" if settings.aws.cdn_base else "",
         language_model=language_model,  # Pass language model for LLM-based SEO generation
     )
 
@@ -529,40 +541,100 @@ def _load_from_azure_blob(blob_url: str, logger: logging.Logger) -> Optional[byt
         return None
 
 
-@app.post("/stories", response_model=StoryResponse)
-def create_story(request: StoryCreateRequest, orchestrator: StoryOrchestrator = Depends(get_orchestrator)):
+def _run_story_job_in_background(
+    orchestrator: StoryOrchestrator,
+    registry: StoryJobRegistry,
+    request: StoryCreateRequest,
+    story_id: UUID,
+) -> None:
+    """Run the long-running story generation on a detached daemon thread.
+
+    A plain thread decouples the work from the request's ASGI scope so the
+    HTTP response can be flushed immediately; the front-end proxy can close
+    the connection while generation continues server-side.
+    """
+
+    def _runner() -> None:
+        log = logging.getLogger(__name__)
+        registry.mark_processing(story_id)
+        try:
+            record = orchestrator.create_story(request, preset_story_id=story_id)
+            registry.mark_completed(story_id, record)
+            log.info("✅ Story job %s completed", story_id)
+        except ValueError as exc:
+            log.warning("Story job %s rejected: %s", story_id, exc)
+            registry.mark_failed(story_id, str(exc))
+        except Exception as exc:
+            log.error("Story job %s failed: %s", story_id, exc, exc_info=True)
+            registry.mark_failed(story_id, f"{type(exc).__name__}: {exc}")
+
+    threading.Thread(
+        target=_runner,
+        name=f"story-job-{story_id}",
+        daemon=True,
+    ).start()
+
+
+@app.post("/stories", response_model=StoryJobAck, status_code=202)
+def create_story(
+    request: StoryCreateRequest,
+    orchestrator: StoryOrchestrator = Depends(get_orchestrator),
+    registry: StoryJobRegistry = Depends(get_job_registry),
+):
     logger = logging.getLogger(__name__)
-    logger.warning("📥 Received story request: mode=%s image_source=%s voice_engine=%s", 
-                   request.mode.value, request.image_source, request.voice_engine)
-    print(f"\n{'='*60}")
-    print(f"📥 BACKEND RECEIVED REQUEST:")
-    print(f"Mode: {request.mode.value}")
-    print(f"Image Source: {request.image_source}")
-    print(f"Voice Engine: {request.voice_engine}")
-    print(f"Slide Count: {request.slide_count}")
-    print(f"{'='*60}\n")
+    story_id = uuid4()
+    registry.create(story_id)
+    logger.warning(
+        "📥 Queued story job %s: mode=%s image_source=%s voice_engine=%s slide_count=%s",
+        story_id,
+        request.mode.value,
+        request.image_source,
+        request.voice_engine,
+        request.slide_count,
+    )
+    _run_story_job_in_background(orchestrator, registry, request, story_id)
+    return StoryJobAck(id=story_id, status="pending")
+
+
+@app.get("/stories/{story_id}/status", response_model=StoryJobStatusResponse)
+def get_story_status(
+    story_id: str,
+    orchestrator: StoryOrchestrator = Depends(get_orchestrator),
+    registry: StoryJobRegistry = Depends(get_job_registry),
+):
+    job = registry.get(story_id)
+    if job is not None:
+        story = (
+            StoryResponse.model_validate(job.record.model_dump())
+            if job.record is not None
+            else None
+        )
+        return StoryJobStatusResponse(
+            id=job.id,
+            status=job.status,
+            error=job.error,
+            story=story,
+            created_at=job.created_at,
+            updated_at=job.updated_at,
+        )
+
     try:
-        record = orchestrator.create_story(request)
-        # HTML is already rendered and saved in orchestrator.create_story()
+        story_uuid = UUID(story_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        # Log the full error for debugging
-        import traceback
-        logger = logging.getLogger(__name__)
-        logger.error("Error creating story: %s", exc, exc_info=True)
-        # Return detailed error message
-        error_msg = str(exc)
-        # Get the exception type name
-        exc_type = type(exc).__name__
-        error_detail = f"{exc_type}: {error_msg}"
-        
-        # Log full traceback to server logs
-        logger.error("Full traceback:", exc_info=True)
-        
-        # Return concise but informative error
-        raise HTTPException(status_code=500, detail=error_detail) from exc
-    return StoryResponse.model_validate(record.model_dump())
+        raise HTTPException(status_code=404, detail="Unknown story id") from exc
+
+    try:
+        record = orchestrator.get_story(str(story_uuid))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown story id") from exc
+
+    return StoryJobStatusResponse(
+        id=story_uuid,
+        status="completed",
+        story=StoryResponse.model_validate(record.model_dump()),
+        created_at=record.created_at,
+        updated_at=record.created_at,
+    )
 
 
 from fastapi import Depends, HTTPException
